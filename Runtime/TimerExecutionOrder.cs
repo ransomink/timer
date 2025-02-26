@@ -5,34 +5,37 @@ namespace Ransom
     public class TimerExecutionOrder : Singleton<TimerExecutionOrder>
     {
         #region Properties
-        [SerializeField] private SO_TimerManager TimerManager = default;
+
+        [field: Space]
+        [field: SerializeField] private SO_TimerManager TimerManager { get; set; }
+        
         #endregion Properties
 
         #region Unity Callbacks
-        private void OnEnable()
+
+        protected virtual void OnEnable()
         {
             UpdateDispatcher.OnFixedUpdate += OnFixedUpdate;
-            UpdateDispatcher.OnUpdate      += OnUpdate;
+            UpdateDispatcher.OnUpdate += OnUpdate;
         }
-        
-        private void OnDisable()
+
+        protected virtual void OnDisable()
         {
             UpdateDispatcher.OnFixedUpdate -= OnFixedUpdate;
-            UpdateDispatcher.OnUpdate      -= OnUpdate;
+            UpdateDispatcher.OnUpdate -= OnUpdate;
         }
         
-        private void OnFixedUpdate()
+        protected virtual void OnFixedUpdate()
         {
-            // Time.Instance.OnFixedUpdate();
             StaticTime.OnFixedUpdate();
         }
     
-        private void OnUpdate()
+        protected virtual void OnUpdate()
         {
-            // Time.Instance.OnUpdate();
             StaticTime.OnUpdate();
             TimerManager.OnUpdate();
         }
+        
         #endregion Unity Callbacks
     }
 }

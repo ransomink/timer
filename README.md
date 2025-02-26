@@ -130,13 +130,13 @@ By default, from the [Ransom Core Framework](https://github.com/ransomink/core-f
 
 #### 1. Execution Order - Singleton:
 
-- From this package, locate the Prefabs folder and drag the **S**_TimerExecutionOrder prefab into the scene. This will update all the active timer instances.
+- From *this* package, locate the Prefabs folder and drag the **S**_TimerExecutionOrder prefab into the scene. This will update all the active timer instances.
   
   ![Ransom-CustomUnityTimer-Select-TimerExecutionOrder](https://i.imgur.com/2gqwh02.png)
 
 #### 2. Execution Order - ScriptableObject:
 
-- From this package, locate the Prefabs folder and drag the **SO**_TimerExecutionOrder prefab into the scene. This will allow you to manually order the execution of any `ScriptableObject` Update method(s) from a Controller, Handler, Manager, or Service, along with all active timer instances.
+- From *this* package, locate the Prefabs folder and drag the **SO**_TimerExecutionOrder prefab into the scene. This will allow you to manually order the execution of any `ScriptableObject` Update method(s) from a Controller, Handler, Manager, or Service class, along with all active timer instances.
   
   ![Ransom-CustomUnityTimer-Select-SO_TimerExecutionOrder](https://i.imgur.com/5RmDmTg.png)
 

@@ -1,6 +1,6 @@
 {
     "name": "com.ransomink.timer",
-    "version": "2.1.1",
+    "version": "2.1.2",
     "displayName": "Ransom Timer",
     "description": "Custom delay (timer) for actions and events.",
     "unity": "2020.3",
@@ -9,8 +9,11 @@
         "com.ransomink.core": "1.0.4"
     },
     "keywords": [
+        "action",
         "coroutine",
+        "custom",
         "delay",
+        "event",
         "timer",
         "unity",
         "wait",

@@ -51,7 +51,7 @@ namespace Ransom.Tests
 
             var dur = 1f;
             var actions = new TimerActions();
-            actions.OnCompleted = () => Debug.Log($"Timer Completed.");
+            actions.Completed = () => Debug.Log($"Timer Completed.");
 
             var timer = new Timer(dur, actions);
 
@@ -59,11 +59,11 @@ namespace Ransom.Tests
 
             Assert.That(timer.State == TimerState.Completed, Is.True);
 
-            actions.OnRestarted += () => Debug.Log($"Timer Started.");
+            actions.Restart += () => Debug.Log($"Timer Started.");
             timer.Restart();
 
             Assert.That(timer.Duration, Is.EqualTo(dur));
-            Assert.That(timer.State == TimerState.Active, Is.True);
+            Assert.That(timer.State == TimerState.Activated, Is.True);
         }
 
         [UnityTest]
@@ -151,9 +151,9 @@ namespace Ransom.Tests
             var dur = 1f;
             var count = 0;
             var actions = new TimerActions();
-            actions.OnRestarted += () => AddToCount();
-            actions.OnRestarted += () => Debug.Log($"Timer Started.");
-            actions.OnCompleted  = () => Debug.Log($"Timer Completed.");
+            actions.Restart += () => AddToCount();
+            actions.Restart += () => Debug.Log($"Timer Started.");
+            actions.Completed = () => Debug.Log($"Timer Completed.");
 
             var timer = new Timer(dur, actions, true);
 
@@ -243,7 +243,7 @@ namespace Ransom.Tests
 
             timer.Start(dur);
 
-            Assert.That(timer.State == TimerState.Active, Is.True);
+            Assert.That(timer.State == TimerState.Activated, Is.True);
             Assert.AreEqual(time + (1f + dur), timer.EndTime, Delta);
         }
 
@@ -259,8 +259,8 @@ namespace Ransom.Tests
             var dur = 4f;
             var timer = new Timer(false, false);
             var actions = new TimerActions();
-            actions.OnResumed = () => Debug.Log($"Timer Resumed.");
-            actions.OnSuspended = () => Debug.Log($"Timer Suspended.");
+            actions.Resumed = () => Debug.Log($"Timer Resumed.");
+            actions.Suspend = () => Debug.Log($"Timer Suspended.");
             timer.Set(comp, dur, actions);
 
             yield return new WaitForSeconds(2f);
@@ -280,7 +280,7 @@ namespace Ransom.Tests
             yield return null;
 
             Assert.That(timer.Behaviour.enabled, Is.True);
-            Assert.That(timer.State == TimerState.Active, Is.True);
+            Assert.That(timer.State == TimerState.Activated, Is.True);
 
             yield return new WaitForSeconds(2f);
 

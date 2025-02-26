@@ -12,3 +12,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: f0c204c3cc42aca4aa30d9bd938cf7ef, type: 3}
   m_Name: TimerManager
   m_EditorClassIdentifier: 
+  _useFrames: 1
+  _useSeconds: 0
+  _intervalFrames: 30
+  _intervalSeconds: 1
