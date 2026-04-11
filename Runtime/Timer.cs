@@ -16,94 +16,107 @@ namespace Ransom
     {
         #region Fields
 
-        [Header("STATE")]
-        [SerializeField] private TimerState _state = TimerState.Disable;
-        [SerializeField] private bool _isDirty;
-        [SerializeField] private bool _canLoop;
-        [SerializeField] private bool _hasReference;
-        [SerializeField] private bool _useUnscaledTime;
-        [SerializeField] private bool _isSuspendedManually;
-
-        [Header("DATA")]
-        [SerializeField] [ReadOnly] private float _startTime;
-        [SerializeField] [ReadOnly] private float _duration;
-        [SerializeField] [ReadOnly] private float _endTime;
-        [SerializeField] [ReadOnly] private float _suspendedTime;
-
-        private MonoBehaviour _behaviour;
+        [Header(TimerLib.Headers.State)]
+        [SerializeField] [Tooltip(TimerLib.Tooltips.State)] private TimerState _state = TimerState.Disable;
+        [SerializeField] [Tooltip(TimerLib.Tooltips.IsDirty)] private bool _isDirty;
+        [SerializeField] [Tooltip(TimerLib.Tooltips.CanLoop)] private bool _canLoop;
+        [SerializeField] [Tooltip(TimerLib.Tooltips.HasReference)] private bool _hasReference;
+        [SerializeField] [Tooltip(TimerLib.Tooltips.UseUnscaledTime)] private bool _useUnscaledTime;
+        [SerializeField] [Tooltip(TimerLib.Tooltips.IsSuspendedManually)] private bool _isSuspendedManually;
         
+        [Header(TimerLib.Headers.Data)]
+        [SerializeField] [Tooltip(TimerLib.Tooltips.Duration)] [ReadOnly] private float _duration;
+        [SerializeField] [Tooltip(TimerLib.Tooltips.SuspendedTime)] [ReadOnly] private float _suspendedTime;
+        [SerializeField] [Tooltip(TimerLib.Tooltips.TimeRemaining)] [ReadOnly] private float _timeRemaining;
+        [Space]
+        [SerializeField] [Tooltip(TimerLib.Tooltips.IsDelayPhase)] [ReadOnly] private bool _isDelayPhase;
+        [SerializeField] [Tooltip(TimerLib.Tooltips.DelayDuration)] [ReadOnly] private float _delayDuration;
+
+        private Action _onCompleted;
+        private Action<float> _onUpdated;
+
+        private TimerActions _actions;
+        private MonoBehaviour _behaviour;
+
         #endregion Fields
 
         #region Constructors
         
         /// <summary>
-        /// Creates an inactive Timer with an optional choice of using unscaled time.
+        /// Initializes a new instance of the <see cref="Timer"/> class.
         /// </summary>
-        /// <param name="isUnscaled">Set to true for timeScale-independent (real-time) Timer, false for Timer affected by game time scaling (default).</param>
-        public Timer(bool isUnscaled = false) : this(false, isUnscaled) {}
+        /// <param name="isUnscaled">Determines if the timer should use <c>Time.unscaledDeltaTime</c> instead of the standard game clock (default is false).</param>
+        /// <remarks>
+        /// This constructor chains to the primary constructor with the looping parameter set to <c>false</c> by default.
+        /// Use this for one-shot timers that need to ignore or respect the Unity Time Scale.
+        /// </remarks>
+        public Timer(bool isUnscaled = false) : this(false, isUnscaled) { }
 
         /// <summary>
-        /// Creates an inactive Timer with an optional choice to loop.
+        /// Initializes a new instance of the <see cref="Timer"/> class with specific looping and time-scaling behaviors.
         /// </summary>
-        /// <param name="hasLoop">Does the Timer repeat after execution?</param>
-        /// <param name="isUnscaled">Set to true for a timeScale-independent (real-time) Timer, false for a Timer affected by game time scaling (default).</param>
+        /// <param name="hasLoop">Whether the timer should automatically restart upon completion.</param>
+        /// <param name="isUnscaled">Determines if the timer should use <c>Time.unscaledDeltaTime</c> instead of the standard game clock (default is false).</param>
+        /// <remarks>
+        /// This constructor sets the timer to the <see cref="TimerState.Enabled"/> state, allowing it to be 
+        /// added to the <c>TimerManager</c> for processing. Note that a duration must still be set 
+        /// (via <see cref="SetDuration"/> or similar) before the timer can effectively progress.
+        /// </remarks>
         public Timer(bool hasLoop, bool isUnscaled)
         {
             _canLoop = hasLoop;
-            _state = TimerState.Enabled;
             _useUnscaledTime = isUnscaled;
+            _state = TimerState.Enabled;
         }
 
         /// <summary>
-        /// Creates an active Timer with the specified duration, loop setting, and time scaling preference.
+        /// Initializes a new instance of the <see cref="Timer"/> class with a specified duration.
         /// </summary>
-        /// <param name="time">The Timer duration in seconds.</param>
-        /// <param name="hasLoop">Does the Timer repeat after execution? Default is false.</param>
-        /// <param name="isUnscaled">Set to true for a timeScale-independent (real-time) Timer, false for a Timer affected by game time scaling (default).</param>
+        /// <param name="time">The duration of the timer in seconds.</param>
+        /// <param name="hasLoop">Whether the timer should automatically restart upon completion.</param>
+        /// <param name="isUnscaled">Determines if the timer should use <c>Time.unscaledDeltaTime</c> instead of the standard game clock (default is false).</param>
         public Timer(float time, bool hasLoop = false, bool isUnscaled = false)
         {
-            Default(time, hasLoop, isUnscaled);
+            Initialize(time, hasLoop, isUnscaled);
         }
 
         /// <summary>
-        /// Creates an active Timer with the specified duration, action to execute, loop setting, and time scaling preference.
+        /// Initializes a new instance of the <see cref="Timer"/> class with a completion callback.
         /// </summary>
-        /// <param name="time">The Timer duration in seconds.</param>
-        /// <param name="action">The action to execute when the Timer completes.</param>
-        /// <param name="hasLoop">Does the Timer repeat after execution? Default is false.</param>
-        /// <param name="isUnscaled">Set to true for a timeScale-independent (real-time) Timer, false for a Timer affected by game time scaling (default).</param>
+        /// <param name="time">The duration of the timer in seconds.</param>
+        /// <param name="action">The delegate to execute when the timer finishes.</param>
+        /// <param name="hasLoop">Whether the timer should automatically restart upon completion.</param>
+        /// <param name="isUnscaled">Determines if the timer should use <c>Time.unscaledDeltaTime</c> instead of the standard game clock (default is false).</param>
         public Timer(float time, Action action, bool hasLoop = false, bool isUnscaled = false)
         {
             Set(time, action, hasLoop, isUnscaled);
         }
 
         /// <summary>
-        /// Creates an active Timer with the specified duration, TimerActions, loop setting, and time scaling preference.
+        /// Initializes a new instance of the <see cref="Timer"/> class with a comprehensive set of callbacks.
         /// </summary>
-        /// <param name="time">The Timer duration in seconds.</param>
-        /// <param name="timerActions">The TimerActions to associate with this Timer.</param>
-        /// <param name="hasLoop">Does the Timer repeat after execution? Default is false.</param>
-        /// <param name="isUnscaled">Set to true for a timeScale-independent (real-time) Timer, false for a Timer affected by game time scaling (default).</param>
+        /// <param name="time">The duration of the timer in seconds.</param>
+        /// <param name="timerActions">A struct or class containing multiple lifecycle callbacks (Update, Start, Cancel, etc.).</param>
+        /// <param name="hasLoop">Whether the timer should automatically restart upon completion.</param>
+        /// <param name="isUnscaled">Determines if the timer should use <c>Time.unscaledDeltaTime</c> instead of the standard game clock (default is false).</param>
         public Timer(float time, TimerActions timerActions, bool hasLoop = false, bool isUnscaled = false)
         {
             Set(time, timerActions, hasLoop, isUnscaled);
         }
 
         /// <summary>
-        /// Creates a Timer associated with a MonoBehaviour.
-        /// The Timer is initially set to an inactive state.
+        /// Initializes a new instance of the <see cref="Timer"/> class bound to a <see cref="MonoBehaviour"/> lifecycle.
         /// </summary>
-        /// <param name="behaviour">The MonoBehaviour to associate with the Timer.</param>
-        /// <param name="isUnscaled">True to create a Timer unaffected by timescale (real-time), false to make it affected by game time scaling (default).</param>
-        public Timer([NotNull] MonoBehaviour behaviour, bool isUnscaled = false) : this(behaviour, false, isUnscaled) {}
+        /// <param name="behaviour">The owner of this timer. The timer will automatically invalidate if this <see cref="MonoBehaviour"/> is destroyed.</param>
+        /// <param name="isUnscaled">Determines if the timer should use <c>Time.unscaledDeltaTime</c> instead of the standard game clock.</param>
+        public Timer([NotNull] MonoBehaviour behaviour, bool isUnscaled = false) : this(behaviour, false, isUnscaled) { }
 
         /// <summary>
-        /// Creates a Timer associated with a MonoBehaviour.
-        /// The Timer is initially set to an inactive state with loop and time scaling options.
+        /// Initializes a new instance of the <see cref="Timer"/> class with an owner, looping, and time-scaling settings.
         /// </summary>
-        /// <param name="behaviour">The MonoBehaviour to associate with the Timer.</param>
-        /// <param name="hasLoop">Determines whether the Timer should repeat after execution.</param>
-        /// <param name="isUnscaled">True to create a Timer unaffected by timescale (real-time), false to make it affected by game time scaling (default).</param>
+        /// <param name="behaviour">The owner of this timer. The timer will automatically invalidate if this <see cref="MonoBehaviour"/> is destroyed.</param>
+        /// <param name="hasLoop">Determines if the timer should automatically reset and restart upon completion.</param>
+        /// <param name="isUnscaled">Determines if the timer should use <c>Time.unscaledDeltaTime</c> instead of the standard game clock.</param>
         public Timer([NotNull] MonoBehaviour behaviour, bool hasLoop, bool isUnscaled)
         {
             if (!behaviour) throw new ArgumentNullException(nameof(behaviour));
@@ -111,32 +124,32 @@ namespace Ransom
             SetBehaviour(behaviour);
             
             _canLoop = hasLoop;
-            _state = TimerState.Enabled;
             _useUnscaledTime = isUnscaled;
+            _state = TimerState.Enabled;
         }
 
         /// <summary>
-        /// Creates a Timer associated with a MonoBehaviour.
+        /// Initializes a new instance of the <see cref="Timer"/> class with an owner and a duration.
         /// </summary>
-        /// <param name="behaviour">The MonoBehaviour to associate with the Timer.</param>
-        /// <param name="time">The Timer duration in seconds.</param>
-        /// <param name="hasLoop">Determines whether the Timer should repeat after execution.</param>
-        /// <param name="isUnscaled">True to create a Timer unaffected by timescale (real-time), false to make it affected by game time scaling (default).</param>
+        /// <param name="behaviour">The owner of this timer. The timer will automatically invalidate if this <see cref="MonoBehaviour"/> is destroyed.</param>
+        /// <param name="time">The duration of the timer in seconds.</param>
+        /// <param name="hasLoop">Determines if the timer should automatically reset and restart upon completion.</param>
+        /// <param name="isUnscaled">Determines if the timer should use <c>Time.unscaledDeltaTime</c> instead of the standard game clock.</param>
         public Timer([NotNull] MonoBehaviour behaviour, float time, bool hasLoop = false, bool isUnscaled = false)
         {
             if (!behaviour) throw new ArgumentNullException(nameof(behaviour));
-            
+    
             Set(behaviour, time, hasLoop, isUnscaled);
         }
 
         /// <summary>
-        /// Creates a Timer attached tp the life cycle of an object with a specified action.
+        /// Initializes a new instance of the <see cref="Timer"/> class with a owner, duration, and completion callback.
         /// </summary>
-        /// <param name="behaviour">The MonoBehaviour to associate with the Timer.</param>
-        /// <param name="time">The Timer duration in seconds.</param>
-        /// <param name="action">The action to execute when the Timer completes.</param>
-        /// <param name="hasLoop">Determines whether the Timer should repeat after execution.</param>
-        /// <param name="isUnscaled">True to create a Timer unaffected by timescale (real-time), false to make it affected by game time scaling (default).</param>
+        /// <param name="behaviour">The owner of this timer. The timer will automatically invalidate if this <see cref="MonoBehaviour"/> is destroyed.</param>
+        /// <param name="time">The duration of the timer in seconds.</param>
+        /// <param name="action">The delegate to execute when the timer completes.</param>
+        /// <param name="hasLoop">Determines if the timer should automatically reset and restart upon completion.</param>
+        /// <param name="isUnscaled">Determines if the timer should use <c>Time.unscaledDeltaTime</c> instead of the standard game clock.</param>
         public Timer([NotNull] MonoBehaviour behaviour, float time, Action action, bool hasLoop = false, bool isUnscaled = false)
         {
             if (!behaviour) throw new ArgumentNullException(nameof(behaviour));
@@ -145,861 +158,1013 @@ namespace Ransom
         }
 
         /// <summary>
-        /// Creates a Timer attached to the life cycle of an object with specified TimerActions and options.
+        /// Initializes a new instance of the <see cref="Timer"/> class with an owner, duration, and multiple lifecycle callbacks.
         /// </summary>
-        /// <param name="behaviour">The MonoBehaviour to associate with the Timer.</param>
-        /// <param name="time">The Timer duration in seconds.</param>
-        /// <param name="timerActions">The TimerActions to associate with the Timer.</param>
-        /// <param name="hasLoop">Determines whether the Timer should repeat after execution.</param>
-        /// <param name="isUnscaled">True to create a Timer unaffected by timescale (real-time), false to make it affected by game time scaling (default).</param>
+        /// <param name="behaviour">The owner of this timer. The timer will automatically invalidate if this <see cref="MonoBehaviour"/> is destroyed.</param>
+        /// <param name="time">The duration of the timer in seconds.</param>
+        /// <param name="timerActions">A <see cref="TimerActions"/> container providing multi-stage callbacks such as Start, Update, and Cancel.</param>
+        /// <param name="hasLoop">Determines if the timer should automatically reset and restart upon completion.</param>
+        /// <param name="isUnscaled">Determines if the timer should use <c>Time.unscaledDeltaTime</c> instead of the standard game clock.</param>
         public Timer([NotNull] MonoBehaviour behaviour, float time, TimerActions timerActions, bool hasLoop = false, bool isUnscaled = false)
         {
             if (!behaviour) throw new ArgumentNullException(nameof(behaviour));
-            
+    
             Set(behaviour, time, timerActions, hasLoop, isUnscaled);
         }
         
         #endregion Constructors
         
         #region Properties
-
-        /// <summary>
-        /// Gets or sets the TimerActions associated with the Timer.
+        
+        /// <summary>/// <summary>
+        /// The delegate executed every frame while the timer is active. 
+        /// Provides a normalized value (0 to 1) representing completion progress.
         /// </summary>
-        /// <value>
-        /// The TimerActions associated with the Timer.
-        /// </value>
-        /// <remarks>
-        /// This property allows you to access and manipulate the TimerActions which provide event handlers
-        /// for various Timer events such as: OnCompleted, OnCancelled, OnSuspended, OnResumed, OnUpdated.
-        /// </remarks>
-        public TimerActions Actions { get; set; } = new();
 
-        /// <summary>
-        /// Gets the MonoBehaviour associated with the Timer.
+        /// The delegate executed when the timer reaches zero or is forced to complete.
         /// </summary>
-        /// <value>
-        /// The MonoBehaviour associated with the Timer.
-        /// </value>
-        /// <remarks>
-        /// The Timer's life cycle is associated with this MonoBehaviour reference.
-        /// </remarks>
-        public MonoBehaviour Behaviour => _behaviour;
-
-        /// <summary>
-        /// Gets the duration of the Timer in seconds.
-        /// </summary>
-        /// <value>
-        /// The duration of the Timer in seconds.
-        /// </value>
-        /// <remarks>
-        /// It represents the length of time for which the Timer is set.
-        /// </remarks>
-        public float Duration => _duration;
-
-        /// <summary>
-        /// Gets the elapsed time in seconds since the Timer started.
-        /// </summary>
-        /// <value>
-        /// The elapsed time in seconds.
-        /// </value>
-        /// <remarks>
-        /// If the Timer has been manually suspended or canceled, it returns the time at which it was suspended or canceled.
-        /// Otherwise, it returns the time elapsed since the Timer was started.
-        /// </remarks>
-        public float ElapsedTime
+        public event Action Completed
         {
-            get
-            {
-                if (_state is TimerState.Cancelled or TimerState.Suspended) return _suspendedTime;
-
-                return Time - _startTime;
-            }
+            add => _onCompleted += value;
+            remove => _onCompleted -= value;
+        }
+        
+        /// <summary>
+        /// The delegate executed every frame while the timer is active. 
+        /// Provides a normalized value (0 to 1) representing completion progress.
+        /// </summary>
+        public event Action<float> Updated
+        {
+            add => _onUpdated += value;
+            remove => _onUpdated -= value;
         }
 
         /// <summary>
-        /// Gets the ending time of the Timer in seconds.
+        /// Gets or sets the container for lifecycle callbacks. 
+        /// Lazily initializes a new instance if currently null.
         /// </summary>
-        /// <remarks>
-        /// This property retrieves the time, in seconds, when the Timer is expected to end. It represents
-        /// the moment in time when the Timer's duration has elapsed since it started.
-        /// </remarks>
-        public float EndTime => _endTime;
+        public TimerActions Actions
+        {
+            get => _actions ??= new TimerActions();
+            set => _actions = value;
+        }
 
         /// <summary>
-        /// Gets a value indicating whether the Timer has the loop feature enabled.
+        /// The <see cref="MonoBehaviour"/> owner of this timer used for lifecycle binding.
         /// </summary>
-        /// <remarks>
-        /// This property indicates whether the Timer is configured to automatically restart after reaching its end time,
-        /// creating a looping behavior.
-        /// </remarks>
+        public MonoBehaviour Behaviour => _behaviour;
+
+        /// <summary>
+        /// The total duration assigned to the timer in seconds.
+        /// </summary>
+        public float Duration => _duration;
+
+        /// <summary>
+        /// The amount of time in seconds that has passed since the timer started.
+        /// </summary>
+        public float ElapsedTime => _duration - _timeRemaining;
+
+        /// <summary>
+        /// Indicates whether the timer is configured to restart automatically upon completion.
+        /// </summary>
         public bool HasLoop => _canLoop;
 
         /// <summary>
-        /// Gets a value indicating whether the Timer has a MonoBehaviour reference attached.
+        /// Indicates whether this timer is bound to a <see cref="MonoBehaviour"/> reference.
         /// </summary>
-        /// <remarks>
-        /// This property indicates whether the Timer's life cycle is associated with a MonoBehaviour reference.
-        /// </remarks>
         public bool HasReference => _hasReference;
 
         /// <summary>
-        /// Gets a value indicating whether the Timer has been canceled.
+        /// Indicates whether the timer uses <c>Time.unscaledDeltaTime</c> for its calculations.
         /// </summary>
-        /// <remarks>
-        /// This property indicates whether the Timer has been manually canceled by calling the Cancel method.
-        /// </remarks>
+        public bool HasUnscaledTime => _useUnscaledTime;
+
+        /// <summary>
+        /// Indicates whether the timer has been moved to the <see cref="TimerState.Cancelled"/> state.
+        /// </summary>
         public bool IsCancelled => _state == TimerState.Cancelled;
 
         /// <summary>
-        /// Gets a value indicating whether the Timer has been destroyed.
+        /// Indicates whether the timer is currently waiting out its initial delay period.
         /// </summary>
-        /// <remarks>
-        /// This property returns true if the underlying Timer <see cref="Behaviour"/> component has been destroyed, indicating that the Timer is no longer functional.
-        /// </remarks>
+        public bool IsDelayPhase => _isDelayPhase;
+
+        /// <summary>
+        /// Returns true if the associated <see cref="MonoBehaviour"/> owner has been destroyed.
+        /// </summary>
         public bool IsDestroyed => !_behaviour;
 
         /// <summary>
-        /// Gets a value indicating whether the Timer has completed.
+        /// Indicates whether the timer has reached its conclusion.
         /// </summary>
-        /// <value>
-        ///   <c>true</c> if the Timer has completed; otherwise, <c>false</c>.
-        /// </value>
         /// <remarks>
-        /// This property returns <c>true</c> if the Timer has completed its specified duration and is not cancelled or suspended.
-        /// If the Timer is in a dirty state, it returns the value of the dirty flag. A Timer is considered dirty when its state is
-        /// modified externally without following the regular completion conditions.
+        /// This property returns <c>false</c> if the timer is currently cancelled, suspended, or in a delay phase. 
+        /// It returns <c>true</c> if the timer has been flagged as dirty or if the remaining time has lapsed.
         /// </remarks>
         public bool IsDone
         {
             get
             {
                 if (_state is TimerState.Cancelled or TimerState.Suspended) return false;
-                if (!_isDirty) return Time >= _endTime;
+                if (_isDelayPhase) return false;
+                if (_isDirty) return true;
 
-                return _isDirty;
+                return _timeRemaining <= 0f;
             }
             private set => _isDirty = value;
         }
 
         /// <summary>
-        /// Gets a value indicating whether the Timer is currently in a suspended state.
+        /// Indicates whether the timer is currently in the <see cref="TimerState.Suspended"/> state.
         /// </summary>
-        /// <value>
-        ///   <c>true</c> if the Timer is suspended; otherwise, <c>false</c>.
-        /// </value>
-        /// <remarks>
-        /// Use this property to check if the Timer is currently in a suspended state. A Timer can be suspended
-        /// manually or as a result of being cancelled. When suspended, it does not actively count down.
-        /// </remarks>
         public bool IsSuspended => _state == TimerState.Suspended;
 
         /// <summary>
-        /// Gets a value indicating whether the Timer is manually suspended.
+        /// Indicates whether the timer was paused manually by user logic rather than a system-level event.
         /// </summary>
-        /// <value>
-        ///   <c>true</c> if the Timer is manually suspended; otherwise, <c>false</c>.
-        /// </value>
-        /// <remarks>
-        /// Use this property to check if the Timer is manually suspended. A Timer can be manually suspended by
-        /// calling the `Suspend` method with the `isManual` parameter set to `true`. When manually suspended, 
-        /// it can be resumed using the `Resume` method.
-        /// </remarks>
         public bool IsSuspendedManually => _isSuspendedManually;
+        
+        /// <summary>
+        /// Provides global access to the <see cref="TimerManager"/> singleton instance.
+        /// </summary>
+        public static TimerManager Manager => TimerManager.Instance;
 
         /// <summary>
-        /// Gets the recorded start time of the Timer in seconds.
+        /// The current operational <see cref="TimerState"/> of this instance.
         /// </summary>
-        /// <remarks>
-        /// This property retrieves the time in seconds when the Timer was originally started.
-        /// </remarks>
-        public float StartTime => _startTime;
-
-        /// <summary>
-        /// Gets the current state of the Timer.
-        /// </summary>
-        /// <remarks>
-        /// This property retrieves the current state of the Timer, from the <see cref="TimerState"/> enumeration,
-        /// indicating whether the Timer is active, inactive, suspended, cancelled, or completed.
-        /// </remarks>
         public TimerState State => _state;
 
         /// <summary>
-        /// Gets the current time used by the Timer, considering the timescale.
+        /// Gets the current game time, choosing between scaled and unscaled time based on configuration.
         /// </summary>
-        /// <remarks>
-        /// This property returns the current time used by the Timer. If the Timer is set to use unscaled time,
-        /// it returns the time since the start of the application; otherwise,
-        /// it returns the scaled time based on the timescale of the application.
-        /// </remarks>
         public float Time => _useUnscaledTime ? StaticTime.UnscaledTime : StaticTime.ScaledTime;
 
         /// <summary>
-        /// Gets the remaining time of the Timer's execution.
+        /// The amount of time in seconds remaining until the timer completes its current cycle.
         /// </summary>
-        /// <remarks>
-        /// This property returns the remaining time in seconds until completion of the Timer.
-        /// If the Timer is canceled or suspended, it returns the time that was remaining when the Timer was interrupted.
-        /// </remarks>
-        /// <returns>The remaining time.</returns>
-        public float TimeRemaining
-        {
-            get
-            {
-                if (_state is TimerState.Cancelled or TimerState.Suspended) return _suspendedTime;
-
-                return _endTime - Time;
-            }
-        }
-
-        /// <summary>
-        /// Gets a value indicating whether the Timer uses unscaled time.
-        /// </summary>
-        /// <remarks>
-        /// This property returns if the Timer is configured to use unscaled time, which means it
-        /// operates independently of the timescale of the application, making it unaffected by pause or slow motion.
-        /// </remarks>
-        public bool UnscaledTime => _useUnscaledTime;
+        public float TimeRemaining => _timeRemaining;
 
         #endregion Properties
 
         #region Methods
 
-        private void AddTimer() => SO_TimerManager.AddTimer(this);
+        /// <summary>
+        /// Registers this timer with the <see cref="TimerManager"/> for active processing.
+        /// </summary>
+        private void AddTimer()
+        {
+            var manager = Manager;
+            if (manager) manager.AddTimer(this);
+        }
 
         /// <summary>
-        /// Creates a Timer associated with a MonoBehaviour.
-        /// The Timer is initially set to an inactive state.
+        /// Static factory method to create and return a <see cref="Timer"/> bound to a <see cref="MonoBehaviour"/> lifecycle.
         /// </summary>
-        /// <param name="behaviour">The MonoBehaviour to associate with the Timer.</param>
-        /// <param name="isUnscaled">True to create a Timer unaffected by timescale (real-time), false to make it affected by game time scaling (default).</param>
+        /// <param name="behaviour">The owner of this timer. The timer will automatically invalidate if this <see cref="MonoBehaviour"/> is destroyed.</param>
+        /// <param name="isUnscaled">Determines if the timer should use <c>Time.unscaledDeltaTime</c> instead of the standard game clock.</param>
+        /// <returns>A new <see cref="Timer"/> instance.</returns>
         public static Timer Bind([NotNull] MonoBehaviour behaviour, bool isUnscaled = false)
         {
             return new Timer(behaviour, false, isUnscaled);
         }
 
         /// <summary>
-        /// Creates a Timer associated with a MonoBehaviour.
-        /// The Timer is initially set to an inactive state with loop and time scaling options.
+        /// Static factory method to create and return a <see cref="Timer"/> with specific looping and scaling settings, bound to an owner.
         /// </summary>
-        /// <param name="behaviour">The MonoBehaviour to associate with the Timer.</param>
-        /// <param name="hasLoop">Determines whether the Timer should repeat after execution.</param>
-        /// <param name="isUnscaled">True to create a Timer unaffected by timescale (real-time), false to make it affected by game time scaling (default).</param>
+        /// <param name="behaviour">The owner of this timer. The timer will automatically invalidate if this <see cref="MonoBehaviour"/> is destroyed.</param>
+        /// <param name="hasLoop">Determines if the timer should automatically reset and restart upon completion.</param>
+        /// <param name="isUnscaled">Determines if the timer should use <c>Time.unscaledDeltaTime</c> instead of the standard game clock.</param>
+        /// <returns>A new <see cref="Timer"/> instance.</returns>
         public static Timer Bind([NotNull] MonoBehaviour behaviour, bool hasLoop, bool isUnscaled)
         {
             return new Timer(behaviour, hasLoop, isUnscaled);
         }
         
         /// <summary>
-        /// Creates a Timer associated with a MonoBehaviour.
+        /// Static factory method to create and return a <see cref="Timer"/> with a duration, bound to an owner.
         /// </summary>
-        /// <param name="behaviour">The MonoBehaviour to associate with the Timer.</param>
-        /// <param name="time">The Timer duration in seconds.</param>
-        /// <param name="hasLoop">Determines whether the Timer should repeat after execution.</param>
-        /// <param name="isUnscaled">True to create a Timer unaffected by timescale (real-time), false to make it affected by game time scaling (default).</param>
+        /// <param name="behaviour">The owner of this timer. The timer will automatically invalidate if this <see cref="MonoBehaviour"/> is destroyed.</param>
+        /// <param name="time">The duration of the timer in seconds.</param>
+        /// <param name="hasLoop">Determines if the timer should automatically reset and restart upon completion.</param>
+        /// <param name="isUnscaled">Determines if the timer should use <c>Time.unscaledDeltaTime</c> instead of the standard game clock.</param>
+        /// <returns>A new <see cref="Timer"/> instance.</returns>
         public static Timer Bind([NotNull] MonoBehaviour behaviour, float time, bool hasLoop = false, bool isUnscaled = false)
         {
             return new Timer(behaviour, time, hasLoop, isUnscaled);
         }
         
         /// <summary>
-        /// Creates a Timer attached tp the life cycle of an object with a specified action.
+        /// Static factory method to create and return a <see cref="Timer"/> with a duration and completion callback, bound to an owner.
         /// </summary>
-        /// <param name="behaviour">The MonoBehaviour to associate with the Timer.</param>
-        /// <param name="time">The Timer duration in seconds.</param>
-        /// <param name="onCompleted">The action to execute when the Timer completes.</param>
-        /// <param name="hasLoop">Determines whether the Timer should repeat after execution.</param>
-        /// <param name="isUnscaled">True to create a Timer unaffected by timescale (real-time), false to make it affected by game time scaling (default).</param>
+        /// <param name="behaviour">The owner of this timer. The timer will automatically invalidate if this <see cref="MonoBehaviour"/> is destroyed.</param>
+        /// <param name="time">The duration of the timer in seconds.</param>
+        /// <param name="onCompleted">The delegate to execute when the timer completes.</param>
+        /// <param name="hasLoop">Determines if the timer should automatically reset and restart upon completion.</param>
+        /// <param name="isUnscaled">Determines if the timer should use <c>Time.unscaledDeltaTime</c> instead of the standard game clock.</param>
+        /// <returns>A new <see cref="Timer"/> instance.</returns>
         public static Timer Bind([NotNull] MonoBehaviour behaviour, float time, Action onCompleted, bool hasLoop = false, bool isUnscaled = false)
         {
             return new Timer(behaviour, time, onCompleted, hasLoop, isUnscaled);
         }
         
         /// <summary>
-        /// Creates a Timer attached to the life cycle of an object with specified TimerActions and options.
+        /// Static factory method to create and return a <see cref="Timer"/> with a duration and multiple lifecycle callbacks, bound to an owner.
         /// </summary>
-        /// <param name="behaviour">The MonoBehaviour to associate with the Timer.</param>
-        /// <param name="time">The Timer duration in seconds.</param>
-        /// <param name="callbacks">The TimerActions to associate with the Timer.</param>
-        /// <param name="hasLoop">Determines whether the Timer should repeat after execution.</param>
-        /// <param name="isUnscaled">True to create a Timer unaffected by timescale (real-time), false to make it affected by game time scaling (default).</param>
+        /// <param name="behaviour">The owner of this timer. The timer will automatically invalidate if this <see cref="MonoBehaviour"/> is destroyed.</param>
+        /// <param name="time">The duration of the timer in seconds.</param>
+        /// <param name="callbacks">A <see cref="TimerActions"/> container providing multi-stage callbacks such as Start, Update, and Cancel.</param>
+        /// <param name="hasLoop">Determines if the timer should automatically reset and restart upon completion.</param>
+        /// <param name="isUnscaled">Determines if the timer should use <c>Time.unscaledDeltaTime</c> instead of the standard game clock.</param>
+        /// <returns>A new <see cref="Timer"/> instance.</returns>
         public static Timer Bind([NotNull] MonoBehaviour behaviour, float time, TimerActions callbacks, bool hasLoop = false, bool isUnscaled = false)
         {
             return new Timer(behaviour, time, callbacks, hasLoop, isUnscaled);
         }
 
         /// <summary>
-        /// Cancels the Timer, stopping its countdown and marking it as cancelled.
+        /// Stops the timer immediately and triggers the cancellation callback.
         /// </summary>
-        /// <remarks>
-        /// This method stops the Timer's countdown and sets its state to "Cancelled," indicating that the Timer has been intentionally terminated.
-        /// The remaining time is stored for reference.
-        /// </remarks>
         public void Cancel()
         {
             _state = TimerState.Cancelled;
-            _suspendedTime = TimeRemaining;
-            
-            Actions.Cancell?.Invoke(); // Uncomment this line if necessary.
+            _actions?.Cancell?.Invoke();
         }
 
         /// <summary>
-        /// Cancels all active Timers managed by the Timer Manager.
+        /// Globally cancels all active timers managed by the <see cref="TimerManager"/>.
         /// </summary>
-        /// <remarks>
-        /// This method cancels all active Timers that are currently managed by the Timer Manager.
-        /// It effectively stops their countdowns and marks them as canceled, preventing them from
-        /// completing or triggering their associated actions.
-        /// </remarks>
-        /// <seealso cref="Timer"/>
-        /// <seealso cref="SO_TimerManager"/>
-        public static void CancelAllTimers() => SO_TimerManager.CancelAllTimers();
-
-        /// <summary>
-        /// Cancels all active Timers associated with a specific MonoBehaviour.
-        /// </summary>
-        /// <param name="behaviour">The MonoBehaviour whose associated Timers should be cancelled.</param>
-        /// <remarks>
-        /// This method cancels all active Timers that are associated with the MonoBehaviour.
-        /// It effectively stops their countdowns and marks them as canceled, preventing them from
-        /// completing or triggering their associated actions.
-        /// </remarks>
-        /// <seealso cref="Timer"/>
-        /// <seealso cref="SO_TimerManager"/>
-        public static void CancelAllTimers(MonoBehaviour behaviour) => SO_TimerManager.CancelAllTimers(behaviour);
-
-        /// <summary>
-        /// Compares this Timer to another Timer based on their respective end times.
-        /// </summary>
-        /// <param name="other">The Timer to compare to.</param>
-        /// <returns>
-        /// A value indicating the relative order of the Timers based on their <see cref="EndTime"/>:
-        /// -1 if earlier than, 0 if equal to, 1 if later than, the other Timer.
-        /// </returns>
-        /// <remarks>
-        /// This method compares two Timer instances based on their <see cref="EndTime"/>.
-        /// It returns a value that indicates their relative order, which can be used for sorting or comparison purposes.
-        /// </remarks>
-        public int CompareTo(Timer other) => EndTime.CompareTo(other.EndTime);
-
-        private void Default(float time, bool hasLoop = false, bool isUnscaled = false)
+        public static void CancelAllTimers()
         {
-            _useUnscaledTime = isUnscaled;
-            _canLoop = hasLoop;
-            NewDuration(time);
+            var manager = Manager;
+            if (manager) manager.CancelAllTimers();
         }
 
         /// <summary>
-        /// Extends the duration of the Timer by the specified amount.
+        /// Globally cancels all timers associated with a specific <see cref="MonoBehaviour"/>.
         /// </summary>
-        /// <param name="duration">The additional duration in seconds to add to the Timer.</param>
-        /// <remarks>
-        /// This method increases the duration of the Timer by the specified amount, effectively lengthening the time it takes to complete.
-        /// It updates the Timer's end time accordingly, allowing it to account for the extended duration.
-        /// </remarks>
-        public void ExtendDuration(float duration) => _endTime += duration;
-
-        /// <summary>
-        /// Forces the immediate completion of the Timer.
-        /// </summary>
-        /// <remarks>
-        /// Calling this method sets the Timer's completion state to true, indicating that the Timer has finished.
-        /// This method bypasses the normal countdown process and immediately marks the Timer as completed.
-        /// </remarks>
-        public void ForceCompletion() => IsDone = true;
-
-        /// <summary>
-        /// Restart the Timer with the same duration, creating a loop effect.
-        /// </summary>
-        /// <remarks>
-        /// This method resets the Timer's state and restarts it with the same duration, effectively creating a loop effect.
-        /// The Timer will be in the "Active" state, and it will start counting down from the beginning of its duration.
-        /// </remarks>
-        public void LoopDuration()
+        /// <param name="behaviour">The owner of the timers to cancel.</param>
+        public static void CancelAllTimers(MonoBehaviour behaviour)
         {
-            ResetState();
+            var manager = Manager;
+            if (manager) manager.CancelAllTimers(behaviour);
+        }
+
+        /// <summary>
+        /// Evaluates if the timer is valid and capable of progressing based on its state and owner's lifecycle.
+        /// </summary>
+        /// <returns>True if the timer can continue ticking; otherwise, false.</returns>
+        /// <remarks>
+        /// This method handles automatic suspension/resumption if the <see cref="MonoBehaviour"/> owner 
+        /// is disabled/enabled, and triggers <see cref="Cancel"/> if the owner has been destroyed.
+        /// </remarks>
+        public bool CanProcess()
+        {
+            if (!_hasReference) return _state != TimerState.Suspended;
+
+            if (!_behaviour)
+            {
+                Cancel();
+                return false;
+            }
+
+            var isOwnerActive = _behaviour.isActiveAndEnabled;
             
-            _state = TimerState.Activated;
+            switch (isOwnerActive)
+            {
+                case false when _state != TimerState.Suspended:
+                    Suspend( false);
+                    return false;
+                case true when _state == TimerState.Suspended && !_isSuspendedManually:
+                    Resume();
+                    return true;
+                default:
+                    return _state != TimerState.Suspended;
+            }
+        }
+
+        /// <summary>
+        /// Compares the remaining time of this timer with another to facilitate sorting within the <see cref="TimerManager"/>.
+        /// </summary>
+        public int CompareTo(Timer other) => _timeRemaining.CompareTo(other._timeRemaining);
+        
+        /// <summary>
+        /// Checks if the specified timer is currently tracked by the <see cref="TimerManager"/>.
+        /// </summary>
+        public static bool ContainsTimer([NotNull] Timer timer)
+        {
+            var manager = Manager;
+            return manager && manager.ContainsTimer(timer);
+        }
+
+        /// <summary>
+        /// Transition the timer to the completed state and executes all completion delegates.
+        /// </summary>
+        public void ExecuteComplete()
+        {
+            SetState(TimerState.Completed);
+            
+            _onCompleted?.Invoke();
+        }
+
+        /// <summary>
+        /// Executes update delegates, passing the current completion percentage (0 to 1).
+        /// </summary>
+        public void ExecuteUpdate()
+        {
+            var percentDone = PercentageDone();
+            
+            _onUpdated?.Invoke(percentDone);
+        }
+
+        /// <summary>
+        /// Adds additional time to the current duration and remaining time.
+        /// </summary>
+        /// <param name="addedTime">The amount of time in seconds to add.</param>
+        public void ExtendDuration(float addedTime)
+        {
+            if (addedTime <= 0f) return;
+            
+            _duration += addedTime;
+            _timeRemaining += addedTime;
+
+            if (!(_timeRemaining > 0f)) return;
+            
             _isDirty = false;
-            _startTime = _endTime;
-            _endTime += _duration;
-            _suspendedTime = 0;
             
-            Actions.Restart?.Invoke();
+            if (_state == TimerState.Completed) _state = TimerState.Activated;
         }
 
         /// <summary>
-        /// Set a new duration and start the Timer.
+        /// Forces the timer to reach its end state immediately.
         /// </summary>
-        /// <param name="duration">The length of time in seconds for the new duration.</param>
-        /// <remarks>
-        /// This method resets the Timer's state and sets a new duration, effectively starting the Timer countdown.
-        /// The Timer will be in the "Active" state after calling this method, and any previous state or time will be reset.
-        /// </remarks>
+        public void ForceCompletion()
+        {
+            _timeRemaining = 0f;
+            IsDone = true;
+        }
+
+        /// <summary>
+        /// Centralized internal method to set the core operational parameters of the timer.
+        /// </summary>
+        private void Initialize(float time, bool hasLoop = false, bool isUnscaled = false)
+        {
+            _duration = time;
+            _timeRemaining = time;
+            _canLoop = hasLoop;
+            _useUnscaledTime = isUnscaled;
+            _state = TimerState.Enabled;
+        }
+
+        /// <summary>
+        /// Resets the timer to its full duration and restarts the countdown.
+        /// </summary>
+        public void ExecuteRestart()
+        {
+            var overflow = _timeRemaining;
+
+            _isDirty = false;
+            _timeRemaining = _duration + overflow;
+            _state = TimerState.Activated;
+            
+            _actions?.Restart?.Invoke();
+        }
+
+        /// <summary>
+        /// Updates the timer with a new total duration and resets progress.
+        /// </summary>
+        /// <param name="duration">The new duration in seconds.</param>
         public void NewDuration(float duration)
         {
-            ResetTime();
-            ResetState();
-
-            _isDirty = false;
-            _startTime = Time;
             _duration = duration;
-            _endTime = _startTime + duration;
-            _state = TimerState.Activated;
+
+            var shouldActivate = _state is TimerState.Activated or TimerState.Completed;
+            var targetState = shouldActivate ? TimerState.Activated : TimerState.Disable;
             
-            Actions.Restart?.Invoke();
+            ResetProgress(targetState);
 
-            if (SO_TimerManager.Contains(this)) return;
-
-            AddTimer();
+            if (targetState != TimerState.Activated) return;
+            if (ContainsTimer(this)) AddTimer();
         }
 
         /// <summary>
-        /// Calculates the normalized time in seconds since the start of the Timer (Read Only). Helpful for Lerp methods.
+        /// Calculates the completion progress of the timer as a normalized value.
         /// </summary>
-        /// <returns>
-        /// A value between 0 and 1 representing the progress of the Timer's current duration.
-        /// If the Timer is cancelled or suspended, the progress is adjusted accordingly.
-        /// </returns>
-        /// <remarks>
-        /// Use this method to obtain the normalized time progress of the Timer.
-        /// The returned value ranges from 0 (start) to 1 (completion).
-        /// </remarks>
+        /// <returns>A value between 0 and 1, where 1 indicates the timer has finished.</returns>
         public float PercentageDone()
         {
-            var interpolant = !(IsCancelled && IsSuspended) ? Time : _endTime - _suspendedTime;
+            if (_duration <= 0f) return 1f;
             
-            return Mathf.InverseLerp(_startTime, _endTime, interpolant);
+            var percent = 1f - _timeRemaining / _duration;
+            return Mathf.Clamp01(percent);
         }
 
         /// <summary>
-        /// Calculates the smoothed progress of the Timer's current duration using the SmoothStep function (Read Only).
+        /// Calculates the completion progress using a SmoothStep interpolation for non-linear movement.
         /// </summary>
-        /// <returns>
-        /// A value between 0 and 1 representing the smoothed progress of the Timer's current duration.
-        /// The SmoothStep function is applied to the progress obtained from <see cref="PercentageDone"/>.
-        /// </returns>
-        /// <remarks>
-        /// The returned value ranges from 0 (start) to 1 (completion) and provides a smooth transition between these points.
-        /// It is based on the progress obtained from the <see cref="PercentageDone"/> method.
-        /// </remarks>
+        /// <returns>A value between 0 and 1 with smoothed easing at the start and end.</returns>
         public float PercentageDoneSmoothStep() => Mathf.SmoothStep(0f, 1f, PercentageDone());
 
         /// <summary>
-        /// Creates an active Timer with the specified duration, loop setting, and time scaling preference.
+        /// Manages the transition logic when a timer completes its initial delay phase.
         /// </summary>
-        /// <param name="time">The Timer duration in seconds.</param>
-        /// <param name="hasLoop">Does the Timer repeat after execution? Default is false.</param>
-        /// <param name="isUnscaled">Set to true for a timeScale-independent (real-time) Timer, false for a Timer affected by game time scaling (default).</param>
+        /// <returns>True if the timer is currently in or transitioning out of a delay phase; otherwise, false.</returns>
+        public bool ProcessDelay()
+        {
+            if (!IsDelayPhase) return false;
+
+            if (!IsDone) return true;
+            
+            _isDelayPhase = false;
+            _timeRemaining = _duration;
+
+            return true;
+        }
+
+        /// <summary>
+        /// Static factory method to create and return a new <see cref="Timer"/> instance.
+        /// </summary>
+        /// <param name="time">The duration of the timer in seconds.</param>
+        /// <param name="hasLoop">Determines if the timer should automatically reset and restart upon completion.</param>
+        /// <param name="isUnscaled">Determines if the timer should use <c>Time.unscaledDeltaTime</c> instead of the standard game clock.</param>
         public static Timer Record(float time, bool hasLoop = false, bool isUnscaled = false)
         {
             return new Timer(time, hasLoop, isUnscaled);
         }
 
         /// <summary>
-        /// Creates an active Timer with the specified duration, action to execute, loop setting, and time scaling preference.
+        /// Static factory method to create and return a new <see cref="Timer"/> instance with a completion callback.
         /// </summary>
-        /// <param name="time">The Timer duration in seconds.</param>
-        /// <param name="action">The action to execute when the Timer completes.</param>
-        /// <param name="hasLoop">Does the Timer repeat after execution? Default is false.</param>
-        /// <param name="isUnscaled">Set to true for a timeScale-independent (real-time) Timer, false for a Timer affected by game time scaling (default).</param>
+        /// <param name="time">The duration of the timer in seconds.</param>
+        /// <param name="action">The delegate to execute when the timer completes.</param>
+        /// <param name="hasLoop">Determines if the timer should automatically reset and restart upon completion.</param>
+        /// <param name="isUnscaled">Determines if the timer should use <c>Time.unscaledDeltaTime</c> instead of the standard game clock.</param>
+        /// <returns>A new <see cref="Timer"/> instance.</returns>
         public static Timer Record(float time, Action action, bool hasLoop = false, bool isUnscaled = false)
         {
             return new Timer(time, action, hasLoop, isUnscaled);
         }
 
         /// <summary>
-        /// Creates an active Timer with the specified duration, TimerActions, loop setting, and time scaling preference.
+        /// Static factory method to create and return a new <see cref="Timer"/> instance with multiple lifecycle callbacks.
         /// </summary>
-        /// <param name="time">The Timer duration in seconds.</param>
-        /// <param name="timerActions">The TimerActions to associate with this Timer.</param>
-        /// <param name="hasLoop">Does the Timer repeat after execution? Default is false.</param>
-        /// <param name="isUnscaled">Set to true for a timeScale-independent (real-time) Timer, false for a Timer affected by game time scaling (default).</param>
+        /// <param name="time">The duration of the timer in seconds.</param>
+        /// <param name="timerActions">A <see cref="TimerActions"/> container providing multi-stage callbacks such as Start, Update, and Cancel.</param>
+        /// <param name="hasLoop">Determines if the timer should automatically reset and restart upon completion.</param>
+        /// <param name="isUnscaled">Determines if the timer should use <c>Time.unscaledDeltaTime</c> instead of the standard game clock.</param>
+        /// <returns>A new <see cref="Timer"/> instance.</returns>
         public static Timer Record(float time, TimerActions timerActions, bool hasLoop = false, bool isUnscaled = false)
         {
             return new Timer(time, timerActions, hasLoop, isUnscaled);
         }
 
         /// <summary>
-        /// Resets the Timer to its default state, excluding TimerActions events.
+        /// Resets the timer's progress and core configuration without clearing the owner or callbacks.
         /// </summary>
-        /// <remarks>
-        /// This method resets the Timer to its default state, clearing any previous settings or modifications.
-        /// It sets the Timer's time, state, looping behavior, and timescale to their default values.
-        /// Use this method when you want to return the Timer to its initial configuration without affecting TimerActions events.
-        /// </remarks>
         public void Reload()
         {
-            ResetTime();
-            ResetState();
+            // ResetConfiguration();
+            ResetProgress(TimerState.Enabled, _duration);
         }
 
         /// <summary>
-        /// Resets the Timer to its default settings, including TimerActions events.
+        /// Fully resets the timer instance, clearing all data, references, and callbacks to prepare for object pooling.
         /// </summary>
-        /// <remarks>
-        /// This method resets the Timer to its default state, clearing any previous settings or modifications,
-        /// and also resets the TimerActions events. It sets the Timer's time, state, looping behavior, and timescale
-        /// to their default values. Use this method when you want to completely reset the Timer, including its actions.
-        /// </remarks>
         public void Reset()
         {
-            ResetTime();
-            ResetState();
-            Actions.Reset();
+            ResetConfiguration();
             ResetBehaviour();
+            ResetProgress();
+            
+            _onUpdated = null;
+            _onCompleted = null;
+            _actions?.Reset();
         }
 
+        /// <summary>
+        /// Clears the <see cref="MonoBehaviour"/> owner reference and disables lifecycle tracking.
+        /// </summary>
         private void ResetBehaviour()
         {
             _behaviour = null;
             _hasReference = false;
         }
 
-        private void ResetState()
+        /// <summary>
+        /// Resets operational flags and duration to their default values.
+        /// </summary>
+        private void ResetConfiguration()
         {
-            _isDirty = false;
+            _duration = 0f;
             _canLoop = false;
             _useUnscaledTime = false;
             _isSuspendedManually = false;
-            _state = TimerState.Disable;
-        }
-
-        private void ResetTime()
-        {
-            _endTime = 0f;
-            _duration = 0f;
-            _startTime = 0f;
-            _suspendedTime = 0f;
         }
 
         /// <summary>
-        /// Restarts the Timer with the same duration.
+        /// Internal helper to reset temporal progress and state.
         /// </summary>
-        /// <remarks>
-        /// This method restarts the Timer using its current settings.
-        /// It effectively resets the Timer's state, allowing it to run for the same duration.
-        /// Use this method when you want to restart the Timer without changing its duration.
-        /// </remarks>
+        /// <param name="state">The <see cref="TimerState"/> to apply after the reset.</param>
+        /// <param name="duration">Optional new duration to set; defaults to the current <c>_duration</c>.</param>
+        private void ResetProgress(TimerState state = TimerState.Disable, float duration = 0)
+        {
+            _state = state;
+            _isDirty = false;
+            _timeRemaining = duration == 0 ? _duration : duration;
+            
+            _isDelayPhase = false;
+            _delayDuration = 0f;
+        }
+
+        /// <summary>
+        /// Resets the timer to its starting duration and resumes the countdown.
+        /// </summary>
         public void Restart() => NewDuration(_duration);
 
         /// <summary>
-        /// Restarts the Timer with a new duration while keeping current settings.
+        /// Updates the timer with a new duration and restarts the countdown.
         /// </summary>
-        /// <param name="duration">The length of time in seconds for the Timer's new duration.</param>
-        /// <remarks>
-        /// This method restarts the Timer with a new duration while retaining its current settings.
-        /// It allows you to specify a new duration for the Timer to run.
-        /// Use this method to change the Timer's duration without altering other settings.
-        /// </remarks>
+        /// <param name="duration">The new duration of the timer in seconds.</param>
         public void Restart(float duration) => NewDuration(duration);
 
         /// <summary>
-        /// Resumes a suspended Timer, continuing its countdown.
+        /// Resumes a suspended timer and triggers the resumption callback.
         /// </summary>
-        /// <remarks>
-        /// This method resumes a previously suspended Timer, allowing it to continue its countdown from the point where it was suspended.
-        /// It resets the Timer's state to "Active" and adjusts the start and end times based on the time remaining (when it was suspended).
-        /// </remarks>
         public void Resume()
         {
             _isSuspendedManually = false;
-            _endTime = Time + _suspendedTime;
-            _startTime = _endTime - _duration;
             _state = TimerState.Activated;
-            
-            Actions.Resumed?.Invoke();
+            _actions?.Resumed?.Invoke();
         }
 
         /// <summary>
-        /// Resumes all suspended Timers to continue their countdowns.
+        /// Globally resumes all timers managed by the <see cref="TimerManager"/> that were not manually suspended.
         /// </summary>
-        /// <remarks>
-        /// This method resumes all suspended Timers, allowing them to continue their countdowns from
-        /// the point where they were suspended.
-        /// </remarks>
-        /// <seealso cref="Timer"/>
-        /// <seealso cref="SO_TimerManager"/>
-        public static void ResumeAllTimers() => SO_TimerManager.ResumeAllTimers();
-
-        /// <summary>
-        /// Resumes all suspended Timers associated with a specific MonoBehaviour to continue their countdowns.
-        /// </summary>
-        /// <param name="behaviour">The MonoBehaviour whose associated Timers should be resumed.</param>
-        /// <remarks>
-        /// This method resumes all suspended Timers associated with the specified MonoBehaviour,
-        /// allowing them to continue their countdowns from the point where they were suspended.
-        /// </remarks>
-        /// <seealso cref="Timer"/>
-        /// <seealso cref="SO_TimerManager"/>
-        public static void ResumeAllTimers(MonoBehaviour behaviour) => SO_TimerManager.ResumeAllTimers(behaviour);
-
-        /// <summary>
-        /// Sets the Timer's properties, including duration, loop setting, and time scaling preference.
-        /// </summary>
-        /// <param name="time">The Timer duration in seconds.</param>
-        /// <param name="hasLoop">Does the Timer repeat after execution? Default is false.</param>
-        /// <param name="isUnscaled">Set to true for a timeScale-independent (real-time) Timer, false for a Timer affected by game time scaling (default).</param>
-        public void Set(float time, bool hasLoop = false, bool isUnscaled = false)
+        public static void ResumeAllTimers()
         {
-            Reload();
-            Default(time, hasLoop, isUnscaled);
+            var manager = Manager;
+            if (manager) manager.ResumeAllTimers();
         }
 
         /// <summary>
-        /// Sets the Timer's properties, including duration, the action to execute, loop setting, and time scaling preference.
+        /// Globally resumes all timers associated with a specific <see cref="MonoBehaviour"/> that were not manually suspended.
         /// </summary>
-        /// <param name="time">The Timer duration in seconds.</param>
-        /// <param name="onComplete">The action to execute when the Timer completes.</param>
-        /// <param name="hasLoop">Does the Timer repeat after execution? Default is false.</param>
-        /// <param name="isUnscaled">Set to true for a timeScale-independent (real-time) Timer, false for a Timer affected by game time scaling (default).</param>
-        public void Set(float time, Action onComplete, bool hasLoop = false, bool isUnscaled = false)
+        /// <param name="behaviour">The owner of the timers to resume.</param>
+        public static void ResumeAllTimers(MonoBehaviour behaviour)
         {
-            Reload();
-            Actions.Set(onComplete);
-            Default(time, hasLoop, isUnscaled);
+            var manager = Manager;
+            if (manager) manager.ResumeAllTimers(behaviour);
         }
 
         /// <summary>
-        /// Sets the Timer's properties, including duration, TimerActions to handle events, loop setting, and time scaling preference.
+        /// Configures the timer with a duration and operational settings.
         /// </summary>
-        /// <param name="time">The Timer duration in seconds.</param>
-        /// <param name="callbacks">The TimerActions to associate with the Timer.</param>
-        /// <param name="hasLoop">Does the Timer repeat after execution? Default is false.</param>
-        /// <param name="isUnscaled">Set to true for a timeScale-independent (real-time) Timer, false for a Timer affected by game time scaling (default).</param>
-        public void Set(float time, TimerActions callbacks, bool hasLoop = false, bool isUnscaled = false)
+        /// <param name="time">The duration of the timer in seconds.</param>
+        /// <param name="hasLoop">Determines if the timer should automatically reset and restart upon completion.</param>
+        /// <param name="isUnscaled">Determines if the timer should use <c>Time.unscaledDeltaTime</c> instead of the standard game clock.</param>
+        private void Set(float time, bool hasLoop = false, bool isUnscaled = false)
         {
-            Reload();
+            Initialize(time, hasLoop, isUnscaled);
+        }
+
+        /// <summary>
+        /// Configures the timer with a duration, completion callback, and operational settings.
+        /// </summary>
+        /// <param name="time">The duration of the timer in seconds.</param>
+        /// <param name="onComplete">The delegate to execute when the timer completes.</param>
+        /// <param name="hasLoop">Determines if the timer should automatically reset and restart upon completion.</param>
+        /// <param name="isUnscaled">Determines if the timer should use <c>Time.unscaledDeltaTime</c> instead of the standard game clock.</param>
+        private void Set(float time, Action onComplete, bool hasLoop = false, bool isUnscaled = false)
+        {
+            _onCompleted = onComplete;
+            Initialize(time, hasLoop, isUnscaled);
+        }
+
+        /// <summary>
+        /// Configures the timer with a duration, multiple lifecycle callbacks, and operational settings.
+        /// </summary>
+        /// <param name="time">The duration of the timer in seconds.</param>
+        /// <param name="callbacks">A <see cref="TimerActions"/> container providing multi-stage callbacks such as Start, Update, and Cancel.</param>
+        /// <param name="hasLoop">Determines if the timer should automatically reset and restart upon completion.</param>
+        /// <param name="isUnscaled">Determines if the timer should use <c>Time.unscaledDeltaTime</c> instead of the standard game clock.</param>
+        private void Set(float time, TimerActions callbacks, bool hasLoop = false, bool isUnscaled = false)
+        {
             Actions.Set(callbacks);
-            Default(time, hasLoop, isUnscaled);
+            Initialize(time, hasLoop, isUnscaled);
         }
 
         /// <summary>
-        /// Sets the Timer's properties, including the associated MonoBehaviour, duration, loop setting, and time scaling preference.
+        /// Configures the timer with an owner, duration, and operational settings.
         /// </summary>
-        /// <param name="behaviour">The MonoBehaviour to associate with the Timer.</param>
-        /// <param name="time">The Timer duration in seconds.</param>
-        /// <param name="hasLoop">Does the Timer repeat after execution? Default is false.</param>
-        /// <param name="isUnscaled">Set to true for a timeScale-independent (real-time) Timer, false for a Timer affected by game time scaling (default).</param>
-        public void Set(MonoBehaviour behaviour, float time, bool hasLoop = false, bool isUnscaled = false)
+        /// <param name="behaviour">The owner of this timer. The timer will automatically invalidate if this <see cref="MonoBehaviour"/> is destroyed.</param>
+        /// <param name="time">The duration of the timer in seconds.</param>
+        /// <param name="hasLoop">Determines if the timer should automatically reset and restart upon completion.</param>
+        /// <param name="isUnscaled">Determines if the timer should use <c>Time.unscaledDeltaTime</c> instead of the standard game clock.</param>
+        private void Set(MonoBehaviour behaviour, float time, bool hasLoop = false, bool isUnscaled = false)
         {
-            Reload();
             SetBehaviour(behaviour);
-            Default(time, hasLoop, isUnscaled);
+            Initialize(time, hasLoop, isUnscaled);
         }
 
         /// <summary>
-        /// Sets the Timer's properties, including the associated MonoBehaviour, duration, action to execute, loop setting, and time scaling preference.
+        /// Configures the timer with an owner, duration, completion callback, and operational settings.
         /// </summary>
-        /// <param name="behaviour">The MonoBehaviour to associate with the Timer.</param>
-        /// <param name="time">The Timer duration in seconds.</param>
-        /// <param name="onComplete">The action to execute when the Timer completes.</param>
-        /// <param name="hasLoop">Does the Timer repeat after execution? Default is false.</param>
-        /// <param name="isUnscaled">Set to true for a timeScale-independent (real-time) Timer, false for a Timer affected by game time scaling (default).</param>
-        public void Set(MonoBehaviour behaviour, float time, Action onComplete, bool hasLoop = false, bool isUnscaled = false)
+        /// <param name="behaviour">The owner of this timer. The timer will automatically invalidate if this <see cref="MonoBehaviour"/> is destroyed.</param>
+        /// <param name="time">The duration of the timer in seconds.</param>
+        /// <param name="onComplete">The delegate to execute when the timer completes.</param>
+        /// <param name="hasLoop">Determines if the timer should automatically reset and restart upon completion.</param>
+        /// <param name="isUnscaled">Determines if the timer should use <c>Time.unscaledDeltaTime</c> instead of the standard game clock.</param>
+        private void Set(MonoBehaviour behaviour, float time, Action onComplete, bool hasLoop = false, bool isUnscaled = false)
         {
-            Reset();
-            Actions.Set(onComplete);
+            _onCompleted = onComplete;
             SetBehaviour(behaviour);
-            Default(time, hasLoop, isUnscaled);
+            Initialize(time, hasLoop, isUnscaled);
         }
 
         /// <summary>
-        /// Sets the Timer's properties, including the associated MonoBehaviour, duration, TimerActions to handle events, loop setting, and time scaling preference.
+        /// Configures the timer with an owner, duration, multiple lifecycle callbacks, and operational settings.
         /// </summary>
-        /// <param name="behaviour">The MonoBehaviour to associate with the Timer.</param>
-        /// <param name="time">The Timer duration in seconds.</param>
-        /// <param name="callbacks">The TimerActions to associate with the Timer.</param>
-        /// <param name="hasLoop">Does the Timer repeat after execution? Default is false.</param>
-        /// <param name="isUnscaled">Set to true for a timeScale-independent (real-time) Timer, false for a Timer affected by game time scaling (default).</param>
-        public void Set(MonoBehaviour behaviour, float time, TimerActions callbacks, bool hasLoop = false, bool isUnscaled = false)
+        /// <param name="behaviour">The owner of this timer. The timer will automatically invalidate if this <see cref="MonoBehaviour"/> is destroyed.</param>
+        /// <param name="time">The duration of the timer in seconds.</param>
+        /// <param name="callbacks">A <see cref="TimerActions"/> container providing multi-stage callbacks such as Start, Update, and Cancel.</param>
+        /// <param name="hasLoop">Determines if the timer should automatically reset and restart upon completion.</param>
+        /// <param name="isUnscaled">Determines if the timer should use <c>Time.unscaledDeltaTime</c> instead of the standard game clock.</param>
+        private void Set(MonoBehaviour behaviour, float time, TimerActions callbacks, bool hasLoop = false, bool isUnscaled = false)
         {
-            Reset();
             Actions.Set(callbacks);
             SetBehaviour(behaviour);
-            Default(time, hasLoop, isUnscaled);
-        }
-
-        public Timer SetBehaviour([NotNull] MonoBehaviour behaviour)
-        {
-            if (!behaviour) throw new ArgumentNullException(nameof(behaviour));
-            
-            _behaviour = behaviour;
-            _hasReference = true;
-            
-            return this;
+            Initialize(time, hasLoop, isUnscaled);
         }
 
         /// <summary>
-        /// Sets the state of the Timer to the specified TimerState.
+        /// Directly sets the current operational state of the timer.
         /// </summary>
-        /// <param name="state">The new Timer state to be set.</param>
-        /// <remarks>
-        /// Use this method to change the state of the Timer, such as from Active to Suspended or Cancelled.
-        /// </remarks>
+        /// <param name="state">The new <see cref="TimerState"/> to apply.</param>
         public void SetState(TimerState state) => _state = state;
 
         /// <summary>
-        /// Starts the Timer with the specified duration.
+        /// Pauses the timer's progression and triggers the suspension callback.
         /// </summary>
-        /// <param name="duration">The length of time in seconds for the Timer.</param>
-        /// <remarks>
-        /// This method initiates the Timer with the given duration. It effectively sets the Timer's state to active.
-        /// </remarks>
-        public void Start(float duration) => NewDuration(duration);
-
-        /// <summary>
-        /// Suspends the Timer, pausing its countdown.
-        /// </summary>
-        /// <param name="isManual">Optional. Indicates whether the suspension is manual (default) or automatic.</param>
-        /// <remarks>
-        /// When the timer is suspended, its countdown is paused. You can specify whether the suspension is manual or automatic.
-        /// Manual suspension allows you to resume the timer at a later time, while automatic suspension might be triggered by specific conditions.
-        /// </remarks>
+        /// <param name="isManual">Determines if the suspension was triggered by user logic rather than a system-level pause.</param>
         public void Suspend(bool isManual = true)
         {
             _isSuspendedManually = isManual;
-            _suspendedTime = TimeRemaining;
             _state = TimerState.Suspended;
-            
-            Actions.Suspend?.Invoke();
+            _actions?.Suspend?.Invoke();
         }
 
         /// <summary>
-        /// Suspends all active Timers, pausing their countdown.
+        /// Globally suspends all active timers managed by the <see cref="TimerManager"/>.
         /// </summary>
-        /// <remarks>
-        /// This method suspends all active Timers, which temporarily halts their countdowns.
-        /// Suspended Timers will not trigger their associated actions until they are resumed.
-        /// </remarks>
-        /// <seealso cref="Timer"/>
-        /// <seealso cref="SO_TimerManager"/>
-        public static void SuspendAllTimers() => SO_TimerManager.SuspendAllTimers();
+        public static void SuspendAllTimers()
+        {
+            var manager = Manager;
+            if (manager) manager.SuspendAllTimers();
+        }
 
         /// <summary>
-        /// Suspends all active Timers associated with a specific MonoBehaviour, pausing their countdown.
+        /// Globally suspends all timers associated with a specific <see cref="MonoBehaviour"/>.
         /// </summary>
-        /// <param name="behaviour">The MonoBehaviour whose associated Timers should be suspended.</param>
+        /// <param name="behaviour">The owner of the timers to suspend.</param>
+        public static void SuspendAllTimers(MonoBehaviour behaviour)
+        {
+            var manager = Manager;
+            if (manager) manager.SuspendAllTimers(behaviour);
+        }
+
+        /// <summary>
+        /// Progresses the timer countdown and handles transitions between delay and active phases.
+        /// </summary>
+        /// <param name="deltaTime">The time slice to subtract from the remaining duration, typically provided by the <see cref="TimerManager"/>.</param>
         /// <remarks>
-        /// This method suspends all active Timers associated with the specified MonoBehaviour, which temporarily halts their countdowns.
-        /// Suspended Timers will not trigger their associated actions until they are resumed.
+        /// This method only executes if the timer is in the <see cref="TimerState.Activated"/> state. 
+        /// If a delay phase is active, it calculates the overflow time to ensure the transition to the 
+        /// main duration remains temporally accurate.
         /// </remarks>
-        /// <seealso cref="Timer"/>
-        /// <seealso cref="SO_TimerManager"/>
-        public static void SuspendAllTimers(MonoBehaviour behaviour) => SO_TimerManager.SuspendAllTimers(behaviour);
+        public void Tick(float deltaTime)
+        {
+            if (_state != TimerState.Activated) return;
+            
+            _timeRemaining -= deltaTime;
+            
+            if (!IsDelayPhase) return;
+            if (_timeRemaining > 0f) return;
+            
+            var overflow = _timeRemaining;
+            _timeRemaining = _duration + overflow;
+            _isDelayPhase = false;
+        }
 
         #endregion Methods    
     
         #region Builder Pattern
 
+        /// <summary>
+        /// Initializes and returns a new <see cref="Timer"/> instance for further configuration.
+        /// </summary>
+        /// <returns>A new <see cref="Timer"/> instance.</returns>
+        public Timer Build() => new Timer();
+        
+        /// <summary>
+        /// Associates the timer with a <see cref="MonoBehaviour"/> owner for lifecycle tracking.
+        /// </summary>
+        /// <param name="behaviour">The owner of this timer. The timer will automatically invalidate if this <see cref="MonoBehaviour"/> is destroyed.</param>
+        /// <returns>The current <see cref="Timer"/> instance for method chaining.</returns>
+        public Timer BindTo([NotNull] MonoBehaviour behaviour) => SetBehaviour(behaviour);
+        
+        /// <summary>
+        /// Configures the timer to follow standard game time scaling.
+        /// </summary>
+        /// <returns>The current <see cref="Timer"/> instance for method chaining.</returns>
+        public Timer Gametime() => SetUnscaledTime(false);
+        
+        /// <summary>
+        /// Sets the total duration of the timer.
+        /// </summary>
+        /// <param name="duration">The duration of the timer in seconds.</param>
+        /// <returns>The current <see cref="Timer"/> instance for method chaining.</returns>
+        public Timer Length(float duration) => SetDuration(duration);
+        
+        /// <summary>
+        /// Configures the timer to automatically reset and restart upon completion.
+        /// </summary>
+        /// <returns>The current <see cref="Timer"/> instance for method chaining.</returns>
+        public Timer Loop() => SetLoop(true);
+        
+        /// <summary>
+        /// Configures the timer to execute only once without looping.
+        /// </summary>
+        /// <returns>The current <see cref="Timer"/> instance for method chaining.</returns>
+        public Timer Once() => SetLoop(false);
+
+        /// <summary>
+        /// Adds a callback to be executed if the timer is manually cancelled.
+        /// </summary>
+        /// <param name="action">The delegate to execute upon cancellation.</param>
+        /// <returns>The current <see cref="Timer"/> instance for method chaining.</returns>
         public Timer OnCancell(Action action)
         {
             Actions.Cancell += action;
             return this;
         }
 
-        public Timer OnCompleted(Action action)
-        {
-            Actions.Completed += action;
-            return this;
-        }
+        /// <summary>
+        /// Adds a callback to be executed when the timer reaches completion.
+        /// </summary>
+        /// <param name="action">The delegate to execute upon completion.</param>
+        /// <returns>The current <see cref="Timer"/> instance for method chaining.</returns>
+        // public Timer OnCompleted(Action action)
+        // {
+        //     Actions.Completed += action;
+        //     return this;
+        // }
 
+        /// <summary>
+        /// Adds a callback to be executed whenever the timer restarts (e.g., during a loop).
+        /// </summary>
+        /// <param name="action">The delegate to execute upon restart.</param>
+        /// <returns>The current <see cref="Timer"/> instance for method chaining.</returns>
         public Timer OnRestart(Action action)
         {
             Actions.Restart += action;
             return this;
         }
 
+        /// <summary>
+        /// Adds a callback to be executed when a suspended timer is resumed.
+        /// </summary>
+        /// <param name="action">The delegate to execute upon resumption.</param>
+        /// <returns>The current <see cref="Timer"/> instance for method chaining.</returns>
         public Timer OnResumed(Action action)
         {
             Actions.Resumed += action;
             return this;
         }
 
+        /// <summary>
+        /// Adds a callback to be executed when the timer is suspended/paused.
+        /// </summary>
+        /// <param name="action">The delegate to execute upon suspension.</param>
+        /// <returns>The current <see cref="Timer"/> instance for method chaining.</returns>
         public Timer OnSuspend(Action action)
         {
             Actions.Suspend += action;
             return this;
         }
 
-        public Timer OnUpdated(Action<float> action)
+        /// <summary>
+        /// Adds a callback to be executed every frame while the timer is active.
+        /// </summary>
+        /// <param name="action">The delegate to execute, providing the current completion percentage (0 to 1).</param>
+        /// <returns>The current <see cref="Timer"/> instance for method chaining.</returns>
+        // public Timer OnUpdated(Action<float> action)
+        // {
+        //     Actions.Updated += action;
+        //     return this;
+        // }
+
+        /// <summary>
+        /// Pauses the timer's progression.
+        /// </summary>
+        /// <returns>The current <see cref="Timer"/> instance for method chaining.</returns>
+        public Timer Pause()
         {
-            Actions.Updated += action;
+            Suspend();
             return this;
         }
 
-        public Timer Run()
+        /// <summary>
+        /// Internal helper to prepare the timer state and register it with the manager.
+        /// </summary>
+        /// <param name="initialState">The <see cref="TimerState"/> to set upon priming.</param>
+        /// <param name="initialDuration">The duration to initialize with.</param>
+        private void Prime(TimerState initialState, float initialDuration = 0f)
         {
-            NewDuration(_duration);
-            return this;
+            ResetProgress(initialState, initialDuration);
+            
+            if (ContainsTimer(this)) AddTimer();
         }
+        
+        /// <summary>
+        /// Configures the timer to use <c>Time.unscaledDeltaTime</c>.
+        /// </summary>
+        /// <returns>The current <see cref="Timer"/> instance for method chaining.</returns>
+        public Timer Realtime() => SetUnscaledTime(true);
 
-        public Timer Run(float duration)
-        {
-            NewDuration(duration);
-            return this;
-        }
-
-        public Timer SetActions([NotNull] TimerActions actions)
+        /// <summary>
+        /// Assigns a <see cref="TimerActions"/> container to the timer.
+        /// </summary>
+        /// <param name="actions">The container providing multi-stage callbacks.</param>
+        /// <returns>The current <see cref="Timer"/> instance for method chaining.</returns>
+        /// <exception cref="ArgumentNullException">Thrown if the provided actions container is null.</exception>
+        private Timer SetActions([NotNull] TimerActions actions)
         {
             Actions = actions ?? throw new ArgumentNullException(nameof(actions));
             return this;
         }
 
-        public Timer SetDuration(float duration)
+        /// <summary>
+        /// Assigns the owner of the timer and enables lifecycle tracking.
+        /// </summary>
+        /// <param name="behaviour">The owner of this timer. The timer will automatically invalidate if this <see cref="MonoBehaviour"/> is destroyed.</param>
+        /// <returns>The current <see cref="Timer"/> instance for method chaining.</returns>
+        private Timer SetBehaviour([NotNull] MonoBehaviour behaviour)
+        {
+            if (!behaviour) throw new ArgumentNullException(nameof(behaviour));
+    
+            _behaviour = behaviour;
+            _hasReference = true;
+    
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the total duration of the timer.
+        /// </summary>
+        /// <param name="duration">The duration in seconds.</param>
+        /// <returns>The current <see cref="Timer"/> instance for method chaining.</returns>
+        private Timer SetDuration(float duration)
         {
             _duration = duration;
             return this;
         }
 
-        public Timer SetLoop(bool canLoop)
+        /// <summary>
+        /// Configures whether the timer should automatically reset and restart upon completion.
+        /// </summary>
+        /// <param name="canLoop">Determines if the timer should loop.</param>
+        /// <returns>The current <see cref="Timer"/> instance for method chaining.</returns>
+        private Timer SetLoop(bool canLoop)
         {
             _canLoop = canLoop;
             return this;
         }
 
-        public Timer SetUnscaledTime(bool useUnscaledTime)
+        /// <summary>
+        /// Configures whether the timer should use unscaled or standard game time.
+        /// </summary>
+        /// <param name="useUnscaledTime">Determines if the timer should use <c>Time.unscaledDeltaTime</c>.</param>
+        /// <returns>The current <see cref="Timer"/> instance for method chaining.</returns>
+        private Timer SetUnscaledTime(bool useUnscaledTime)
         {
             _useUnscaledTime = useUnscaledTime;
             return this;
         }
 
+        /// <summary>
+        /// Activates the timer and begins the countdown.
+        /// </summary>
+        /// <returns>The current <see cref="Timer"/> instance for method chaining.</returns>
+        public Timer Start()
+        {
+            Prime(TimerState.Activated);
+            _actions?.Restart?.Invoke();
+            
+            return this;
+        }
+
+        /// <summary>
+        /// Sets a new duration and activates the timer immediately.
+        /// </summary>
+        /// <param name="duration">The duration of the timer in seconds.</param>
+        /// <returns>The current <see cref="Timer"/> instance for method chaining.</returns>
+        public Timer Start(float duration)
+        {
+            _duration = duration;
+            
+            Prime(TimerState.Activated, duration);
+            _actions?.Restart?.Invoke();
+            
+            return this;
+        }
+
+        /// <summary>
+        /// Activates the timer after a specified delay period.
+        /// </summary>
+        /// <param name="delay">The delay duration in seconds before the main timer starts.</param>
+        /// <returns>The current <see cref="Timer"/> instance for method chaining.</returns>
+        public Timer StartDelayed(float delay)
+        {
+            if (delay <= 0f) return Start();
+
+            _isDirty = false;
+            _isDelayPhase = true;
+            _delayDuration = delay;
+            _timeRemaining = delay;
+            _state = TimerState.Activated;
+            
+            if (ContainsTimer(this)) AddTimer();
+
+            return this;
+        }
+
+        /// <summary>
+        /// Primes the timer in a <see cref="TimerState.Suspended"/> state, requiring a manual resume to start.
+        /// </summary>
+        /// <returns>The current <see cref="Timer"/> instance for method chaining.</returns>
+        public Timer StartPaused()
+        {
+            Prime(TimerState.Suspended);
+            Suspend();
+            
+            return this;
+        }
+
+        /// <summary>
+        /// Stops the timer and triggers cancellation logic.
+        /// </summary>
+        /// <returns>The current <see cref="Timer"/> instance for method chaining.</returns>
+        public Timer Stop()
+        {
+            Cancel();
+            return this;
+        }
+        
+        /// <summary>
+        /// Associates a set of lifecycle callbacks with the timer.
+        /// </summary>
+        /// <param name="actions">A <see cref="TimerActions"/> container providing multi-stage callbacks.</param>
+        /// <returns>The current <see cref="Timer"/> instance for method chaining.</returns>
+        public Timer WithActions([NotNull] TimerActions actions) => SetActions(actions);
+
         #endregion Builder Pattern
     }
 
     /// <summary>
-    /// A class that defines actions to be triggered at different phases of a Timer.
+    /// A container for lifecycle callbacks used to handle various events throughout a timer's existence.
     /// </summary>
     public sealed class TimerActions
     {
         #region Constructors
 
-        public TimerActions() {}
+        /// <summary>
+        /// Initializes a new instance of the <see cref="TimerActions"/> class with empty callbacks.
+        /// </summary>
+        public TimerActions() { }
 
         /// <summary>
-        /// Creates a new instance of TimerActions, copying actions from an existing TimerActions object.
+        /// Initializes a new instance of the <see cref="TimerActions"/> class by copying delegates from an existing container.
         /// </summary>
-        /// <param name="actions">The TimerActions object to copy from.</param>
+        /// <param name="actions">The source <see cref="TimerActions"/> to copy from.</param>
         public TimerActions(TimerActions actions) => Set(actions);
         
         /// <summary>
-        /// Creates a new instance of TimerActions with the specified events.
+        /// Initializes a new instance of the <see cref="TimerActions"/> class with specific lifecycle delegates.
         /// </summary>
-        /// <param name="onCompleted">Action to be triggered when the Timer completes its execution.</param>
-        /// <param name="onUpdated">Action to be triggered periodically during the Timer's execution, providing the current progress as a parameter.</param>
-        /// <param name="onSuspend">Action to be triggered when the Timer is suspended.</param>
-        /// <param name="onResumed">Action to be triggered when the Timer is resumed.</param>
-        /// <param name="onCancell">Action to be triggered when the Timer is cancelled.</param>
-        /// <param name="onRestart">Action to be triggered when the Timer is restarted.</param>
+        /// <param name="onCompleted">The delegate to execute when the timer completes.</param>
+        /// <param name="onUpdated">The delegate to execute every frame, providing completion percentage (0 to 1).</param>
+        /// <param name="onSuspend">The delegate to execute when the timer is paused.</param>
+        /// <param name="onResumed">The delegate to execute when the timer resumes.</param>
+        /// <param name="onCancell">The delegate to execute if the timer is manually cancelled.</param>
+        /// <param name="onRestart">The delegate to execute when the timer resets for a new loop.</param>
         public TimerActions(
-            Action onCompleted = null, 
-            Action<float> onUpdated = null, 
+            // Action onCompleted = null, 
+            // Action<float> onUpdated = null, 
             Action onSuspend = null, 
             Action onResumed = null, 
             Action onCancell = null, 
             Action onRestart = null)
         {
-            Set(onCompleted, onUpdated, onSuspend, onResumed, onCancell, onRestart);
+            Set(onSuspend, onResumed, onCancell, onRestart);
         }
 
         #endregion Constructors
@@ -1007,21 +1172,22 @@ namespace Ransom
         #region Methods
 
         /// <summary>
-        /// Resets the Timer actions to their default values.
+        /// Clears all assigned callbacks by resetting them to empty delegates.
         /// </summary>
         public void Reset() => Set();
 
         /// <summary>
-        /// Sets the Timer actions based on a TimerActions object.
+        /// Copies delegates from another <see cref="TimerActions"/> instance into this container.
         /// </summary>
-        /// <param name="actions">The TimerActions object containing actions for various Timer events.</param>
+        /// <param name="actions">The source container providing the callbacks.</param>
+        /// <exception cref="ArgumentNullException">Thrown if the provided actions container is null.</exception>
         public void Set([NotNull] TimerActions actions)
         {
             if (actions is null) throw new ArgumentNullException(nameof(actions));
             
             Set(
-                actions.Completed,
-                actions.Updated,
+                // actions.Completed,
+                // actions.Updated,
                 actions.Suspend,
                 actions.Resumed,
                 actions.Cancell,
@@ -1029,24 +1195,27 @@ namespace Ransom
         }
 
         /// <summary>
-        /// Sets the actions to be triggered at different phases during the Timer's execution.
+        /// Assigns specific delegates to the container's lifecycle events.
         /// </summary>
-        /// <param name="onCompleted">Action to be triggered when the Timer completes its execution.</param>
-        /// <param name="onUpdated">Action to be triggered periodically during the Timer's execution, providing the current progress as a parameter.</param>
-        /// <param name="onSuspend">Action to be triggered when the Timer is suspended.</param>
-        /// <param name="onResumed">Action to be triggered when the Timer is resumed.</param>
-        /// <param name="onCancell">Action to be triggered when the Timer is cancelled.</param>
-        /// <param name="onRestart">Action to be triggered when the Timer is restarted.</param>
+        /// <remarks>
+        /// Null parameters are automatically replaced with empty delegates to prevent <see cref="NullReferenceException"/> during invocation.
+        /// </remarks>
+        /// <param name="onCompleted">The delegate to execute when the timer completes.</param>
+        /// <param name="onUpdated">The delegate to execute every frame, providing completion percentage (0 to 1).</param>
+        /// <param name="onSuspend">The delegate to execute when the timer is paused.</param>
+        /// <param name="onResumed">The delegate to execute when the timer resumes.</param>
+        /// <param name="onCancell">The delegate to execute if the timer is manually cancelled.</param>
+        /// <param name="onRestart">The delegate to execute when the timer resets for a new loop.</param>
         public void Set(
-            Action onCompleted = null, 
-            Action<float> onUpdated = null, 
+            // Action onCompleted = null, 
+            // Action<float> onUpdated = null, 
             Action onSuspend = null, 
             Action onResumed = null, 
             Action onCancell = null, 
             Action onRestart = null)
         {
-            Completed = onCompleted ?? delegate { };
-            Updated = onUpdated ?? delegate { };
+            // Completed = onCompleted ?? delegate { };
+            // Updated = onUpdated ?? delegate { };
             Suspend = onSuspend ?? delegate { };
             Resumed = onResumed ?? delegate { };
             Cancell = onCancell ?? delegate { };
@@ -1058,32 +1227,33 @@ namespace Ransom
         #region Events
 
         /// <summary>
-        /// Action to be triggered when the Timer completes its execution.
+        /// The delegate executed when the timer reaches zero or is forced to complete.
         /// </summary>
-        public Action Completed = delegate { };
+        // public Action Completed = delegate { };
 
         /// <summary>
-        /// Action to be triggered periodically during the Timer's execution, providing the current progress as a parameter.
+        /// The delegate executed every frame while the timer is active. 
+        /// Provides a normalized value (0 to 1) representing completion progress.
         /// </summary>
-        public Action<float> Updated = delegate { };
+        // public Action<float> Updated = delegate { };
 
         /// <summary>
-        /// Action to be triggered when the Timer is suspended.
+        /// The delegate executed when the timer enters a suspended state, either manually or automatically.
         /// </summary>
         public Action Suspend = delegate { };
 
         /// <summary>
-        /// Action to be triggered when the Timer is resumed.
+        /// The delegate executed when a suspended timer is returned to an active state.
         /// </summary>
         public Action Resumed = delegate { };
 
         /// <summary>
-        /// Action to be triggered when the Timer is cancelled.
+        /// The delegate executed when the timer is explicitly stopped via a Cancel or Stop command.
         /// </summary>
         public Action Cancell = delegate { };
 
         /// <summary>
-        /// Action to be triggered when the Timer is restarted.
+        /// The delegate executed when the timer resets its duration, typically during a loop cycle.
         /// </summary>
         public Action Restart = delegate { };
 
@@ -1091,37 +1261,37 @@ namespace Ransom
     }
     
     /// <summary>
-    /// Represents the current phase of a Timer.
+    /// Defines the various operational states a <see cref="Timer"/> can occupy during its lifecycle.
     /// </summary>
     public enum TimerState
     {
         /// <summary>
-        /// The Timer is disabled and not currently running.
+        /// The timer is inactive and will not be processed by the manager.
         /// </summary>
         Disable = 0,
         
         /// <summary>
-        /// The Timer is enabled, but not currently running.
+        /// The timer has been initialized but has not yet begun its first countdown tick.
         /// </summary>
         Enabled = 1,
 
         /// <summary>
-        /// The Timer is active and running.
+        /// The timer is currently active and progressing toward completion.
         /// </summary>
         Activated = 2,
 
         /// <summary>
-        /// The Timer is suspended, temporarily paused.
+        /// The timer is paused. It retains its current progress but does not decrement time.
         /// </summary>
         Suspended = 3,
 
         /// <summary>
-        /// The Timer has been cancelled and will not complete.
+        /// The timer has been prematurely stopped and will no longer be processed.
         /// </summary>
         Cancelled = 4,
 
         /// <summary>
-        /// The Timer has completed its execution.
+        /// The timer has successfully reached its target duration.
         /// </summary>
         Completed = 5
     }

@@ -7,7 +7,7 @@ namespace Ransom
         #region Properties
 
         [field: Space]
-        [field: SerializeField] private SO_TimerManager TimerManager { get; set; }
+        [field: SerializeField] private TimerManager TimerManager { get; set; }
         
         #endregion Properties
 
@@ -25,15 +25,15 @@ namespace Ransom
             UpdateDispatcher.OnUpdate -= OnUpdate;
         }
         
-        protected virtual void OnFixedUpdate()
+        protected virtual void OnFixedUpdate(float fixedDeltaTime)
         {
             StaticTime.OnFixedUpdate();
         }
     
-        protected virtual void OnUpdate()
+        protected virtual void OnUpdate(float deltaTime)
         {
             StaticTime.OnUpdate();
-            TimerManager.OnUpdate();
+            TimerManager.OnUpdate(deltaTime);
         }
         
         #endregion Unity Callbacks

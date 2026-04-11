@@ -2,10 +2,12 @@
     "name": "Ransom.Timer.Tests",
     "rootNamespace": "Ransom.Tests",
     "references": [
+        "Ransom.Core",
+        "Ransom.ScriptableObjects",
         "Ransom.Timer",
+        "Ransom.Utils",
         "UnityEditor.TestRunner",
-        "UnityEngine.TestRunner",
-        "Ransom.ScriptableObjects"
+        "UnityEngine.TestRunner"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
