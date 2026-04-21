@@ -6,13 +6,42 @@ namespace Ransom.Tests
     [TestFixture]
     public class TimerStateTests
     {
+        private TimerManager _manager;
+        private UpdateDispatcher _dispatcher;
+        
+        #region Setup
+        
         [SetUp]
         public void Setup()
         {
             // UnitySynchronizationContextDispatcher.Initialize();
+            _manager    = ScriptableObject.CreateInstance<TimerManager>();
 
-            new GameObject("UpdateDispatcher", typeof(UpdateDispatcher));
-        }        
+            var go      = new GameObject("[TEST] UpdateDispatcher");
+            _dispatcher = go.AddComponent<UpdateDispatcher>();
+        }
+
+        [TearDown]
+        public void TearDown()
+        {
+            if (_manager)
+            {
+                _manager.Shutdown();
+                
+                Object.DestroyImmediate(_manager);
+                _manager = null;
+            }
+            
+            if (_dispatcher)
+            {
+                Object.DestroyImmediate(_dispatcher.gameObject);
+                _dispatcher = null;
+            }
+
+            AppLifecycle.SetApplicationToQuit(false);
+        }
+
+        #endregion Setup
 
         [Test]
         public void Timer_InitializesTo_EnabledState()
@@ -32,6 +61,7 @@ namespace Ransom.Tests
         public void Timer_Pause_TransitionsTo_Suspended()
         {
             var timer = Timer.Record(5f).Start().Pause();
+            
             Assert.AreEqual(TimerState.Suspended, timer.State);
             Assert.IsTrue(timer.IsSuspended);
         }
@@ -41,6 +71,7 @@ namespace Ransom.Tests
         {
             var timer = Timer.Record(5f);
             timer.Cancel();
+            
             Assert.AreEqual(TimerState.Cancelled, timer.State);
             Assert.IsTrue(timer.IsCancelled);
         }
@@ -50,19 +81,8 @@ namespace Ransom.Tests
         {
             var timer = Timer.Record(10f).Start();
             timer.ForceCompletion();
+            
             Assert.IsTrue(timer.IsDone);
-        }
-
-        [TearDown]
-        public void TearDown()
-        {
-            if (TimerManager.Instance)
-                TimerManager.Instance.Shutdown();
-            
-            if (UpdateDispatcher.Instance)
-                Object.DestroyImmediate(UpdateDispatcher.Instance.gameObject);
-            
-            AppLifecycle.SetApplicationToQuit(false);
         }
     }
 }

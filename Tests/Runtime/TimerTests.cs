@@ -8,22 +8,36 @@ namespace Ransom.Tests
     {
         private const float DefaultDuration = 5f;
         
+        private TimerManager _manager;
+        private UpdateDispatcher _dispatcher;
+        
         #region Setup
 
         [SetUp]
         public void Setup()
         {
-            new GameObject("UpdateDispatcher", typeof(UpdateDispatcher));
+            _manager    = ScriptableObject.CreateInstance<TimerManager>();
+
+            var go      = new GameObject("[TEST] UpdateDispatcher");
+            _dispatcher = go.AddComponent<UpdateDispatcher>();
         }
 
         [TearDown]
         public void TearDown()
         {
-            if (TimerManager.Instance)
-                TimerManager.Instance.Shutdown();
+            if (_manager)
+            {
+                _manager.Shutdown();
+                
+                Object.DestroyImmediate(_manager);
+                _manager = null;
+            }
             
-            if (UpdateDispatcher.Instance)
-                Object.DestroyImmediate(UpdateDispatcher.Instance.gameObject);
+            if (_dispatcher)
+            {
+                Object.DestroyImmediate(_dispatcher.gameObject);
+                _dispatcher = null;
+            }
 
             AppLifecycle.SetApplicationToQuit(false);
         }
@@ -119,10 +133,10 @@ namespace Ransom.Tests
             var wasInvoked = false;
             var timer = Timer.Record(DefaultDuration).Start();
 
-            timer.Actions.Cancell += () => wasInvoked = true;
+            timer.Actions.Cancel += () => wasInvoked = true;
             timer.Cancel();
 
-            Assert.IsTrue(wasInvoked, "The 'Cancell' event was not triggered.");
+            Assert.IsTrue(wasInvoked, "The 'Cancel' event was not triggered.");
         }
 
         #endregion Event Tests
@@ -145,6 +159,7 @@ namespace Ransom.Tests
         [Test]
         public void Timer_Reset_ClearsAllDataAndConfiguration()
         {
+            // 1. Setup: Create a "dirty" timer with lots of state
             var wasInvoked = false;
             var go = new GameObject("Owner");
             var owner = go.AddComponent<EmptyBehaviour>();
@@ -153,26 +168,39 @@ namespace Ransom.Tests
                 .Loop()
                 .Start();
 
+            // Add a callback to ensure it gets cleared
             timer.Completed += () => wasInvoked = true;
+            
+            // Simulate progress
             timer.Tick(5f);
+            
+            // 2. Action: Perform Hard Reset
             timer.Reset();
 
+            // 3. Assertions
+            // State Checks
             Assert.AreEqual(TimerState.Disable, timer.State, "State should be Disable.");
             Assert.IsFalse(timer.IsDone, "IsDone should be false.");
     
+            // Data Checks
             Assert.AreEqual(0f, timer.ElapsedTime, "Elapsed time should be 0.");
             Assert.AreEqual(0f, timer.Duration, "Duration should be wiped to 0.");
             Assert.AreEqual(0f, timer.TimeRemaining, "TimeRemaining should be wiped to 0.");
     
+            // Configuration Checks
             Assert.IsFalse(timer.HasLoop, "Looping flag should be cleared.");
             Assert.IsFalse(timer.HasReference, "Owner reference flag should be cleared.");
             Assert.IsTrue(timer.IsDestroyed, "Behaviour reference should be null.");
     
+            // Callback Checks
+            // We verify this by forcing the timer to "finish" manually and checking if the bool flips.
+            // If the event was properly cleared, 'wasInvoked' will remain false.
             timer.ForceCompletion();
             timer.ExecuteComplete();
     
             Assert.IsFalse(wasInvoked, "Callbacks should be cleared after Reset.");
     
+            // Cleanup
             Object.DestroyImmediate(go);
         }
 

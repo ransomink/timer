@@ -7,20 +7,35 @@ using UnityEngine;
 namespace Ransom
 {
     /// <summary>
-    /// A centralized system for managing, updating, and optimizing the execution of multiple <see cref="Timer"/> instances.
+    /// A centralized system for managing, updating, and optimizing the execution of
+    /// multiple <see cref="Timer"/> instances.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// This manager utilizes a <see cref="ScriptableSingleton{T}"/> pattern to provide global access while remaining 
-    /// persistent across scenes. It implements <see cref="IUpdate"/> to integrate with a central update loop, 
-    /// reducing the overhead of having multiple <c>Update</c> calls in the scene.
+    /// This manager utilizes a <see cref="ScriptableSingleton{T}"/> pattern to provide
+    /// global access while remaining persistent across scenes. It implements
+    /// <see cref="IUpdate"/> to integrate with a central update loop, reducing the
+    /// overhead of having multiple <c>Update</c> calls in the scene.
     /// </para>
     /// <para>
     /// <b>Performance Features:</b>
     /// <list type="bullet">
-    /// <item><b>Throttled Sorting:</b> Re-prioritizes the timer collection based on frame or time intervals rather than every frame.</item>
-    /// <item><b>O(1) Removals:</b> Uses a swap-with-last technique to discard finished timers without shifting array elements.</item>
-    /// <item><b>Memory Efficiency:</b> Operates on a pre-allocated internal list to minimize Garbage Collector pressure.</item>
+    /// <item><b>Raw Array Iteration:</b> The active timer collection is backed by a
+    /// plain <c>Timer[]</c> rather than <c>List&lt;Timer&gt;</c>, eliminating
+    /// per-element bounds-check overhead in the update loop.</item>
+    /// <item><b>Span Traversal:</b> <c>OnUpdate</c> slices the live portion of the
+    /// backing array into a <c>Span&lt;Timer&gt;</c>, removing the remaining indexer
+    /// indirection at the call site.</item>
+    /// <item><b>O(1) Containment:</b> A parallel <c>HashSet&lt;Timer&gt;</c> makes
+    /// <see cref="ContainsTimer"/> and duplicate-add prevention O(1) instead of O(N).
+    /// </item>
+    /// <item><b>Throttled Sorting:</b> Re-prioritizes the timer collection based on
+    /// frame or time intervals rather than every frame.</item>
+    /// <item><b>O(1) Removals:</b> Uses a swap-with-last technique to discard finished
+    /// timers without shifting array elements.</item>
+    /// <item><b>Timer Object Pool:</b> Recycles <see cref="Timer"/> instances via an
+    /// internal <c>Stack&lt;Timer&gt;</c>, eliminating per-timer heap allocation and
+    /// GC pressure in steady-state gameplay.</item>
     /// </list>
     /// </para>
     /// </remarks>
@@ -33,9 +48,9 @@ namespace Ransom
     {
         #region Fields
         
-        private const int Capacity = 1024;
+        private const int DefaultCapacity = 1024;
         
-        private readonly List<Timer> _timers = new List<Timer>(Capacity);
+        private readonly HashSet<Timer> _timerSet = new HashSet<Timer>(DefaultCapacity);
 
         [Header(TimerLib.Headers.Config)]
         [SerializeField][Tooltip(TimerLib.Tooltips.UseFrames)] private bool _useFrames = true;
@@ -44,9 +59,20 @@ namespace Ransom
         [Space]
         [SerializeField][Tooltip(TimerLib.Tooltips.UseSeconds)] private bool _useSeconds;
         [SerializeField][Tooltip(TimerLib.Tooltips.IntervalSeconds)] private float _intervalSeconds = 1f;
+        
+        [Space]
+        [Header("Pool")]
+        [SerializeField]
+        [Tooltip("Assign a TimerTemplate asset to enable ClassObjectPool-backed " +
+                 "Timer recycling with Inspector-configurable defaults.")]
+        private TimerTemplate _timerTemplate;
 
-        private bool _isDirty;
-        private int _frameCounter;
+        private Timer[]                _timerBuffer = new Timer[DefaultCapacity];
+        private int                    _timerCount;
+        private ClassObjectPool<Timer> _timerPool;
+        
+        private bool  _isDirty;
+        private int   _frameCounter;
         private float _timeSinceLastSort;
         
         #endregion Fields
@@ -56,14 +82,32 @@ namespace Ransom
         public static bool IsQuittingApplication { get; private set; }
         
         /// <summary>
-        /// Provides read-only access to all currently active and managed Timers.
+        /// Provides a read-only view over all currently active and managed Timers.
         /// </summary>
         /// <remarks>
-        /// This property returns the internal list directly as an <see cref="IReadOnlyList{T}"/>. 
-        /// This avoids the memory allocation of <c>AsReadOnly()</c> or a new <c>ReadOnlyCollection</c>, 
-        /// but assumes the caller will not attempt to cast it back to a mutable list.
+        /// Returns an <see cref="ArraySegment{T}"/> wrapping the live slice of the
+        /// internal backing array. <see cref="ArraySegment{T}"/> implements
+        /// <see cref="IReadOnlyList{T}"/>, so existing call sites (.Count, [i]) work
+        /// without modification. No allocation occurs on each access.
         /// </remarks>
-        public IReadOnlyList<Timer> Timers => _timers;
+        public ArraySegment<Timer> Timers => new ArraySegment<Timer>(_timerBuffer, 0, _timerCount);
+        
+        /// <summary>
+        /// Number of <see cref="Timer"/> instances currently inactive in the pool.
+        /// Returns 0 when pooling is disabled.
+        /// </summary>
+        public int PooledTimerCount => _timerPool?.Inactive ?? 0;
+        
+        /// <summary>
+        /// Number of <see cref="Timer"/> instances currently active (spawned) from
+        /// the pool. Returns 0 when pooling is disabled.
+        /// </summary>
+        public int ActivePooledTimerCount => _timerPool?.Active ?? 0;
+        
+        /// <summary>
+        /// Whether the <see cref="ClassObjectPool{T}"/> has been initialized.
+        /// </summary>
+        public bool IsPoolReady => _timerPool != null;
         
         #endregion Properties
 
@@ -80,35 +124,30 @@ namespace Ransom
         /// </summary>
         /// <param name="deltaTime">The current game clock delta time.</param>
         /// <remarks>
-        /// This method performs the following operations per frame:
-        /// <list type="bullet">
-        /// <item>Handles pending sort requests if the collection is dirty.</item>
-        /// <item>Validates timer references and performs fast-cleanup of destroyed/cancelled timers.</item>
-        /// <item>Processes the <see cref="Timer.Tick"/> using either scaled or unscaled time.</item>
-        /// <item>Manages transitions between the Delay phase and the Active phase.</item>
-        /// <item>Triggers Update and Completion callbacks.</item>
-        /// <item>Handles automatic looping and re-sorting of recurring timers.</item>
-        /// </list>
-        /// Iteration is performed in reverse to allow for safe O(1) removals during the update cycle.
+        /// Iterates the live timer slice in reverse via <see cref="Span{T}"/> for
+        /// bounds-check-free access. Removal is safe because
+        /// <see cref="RemoveAtFast"/> swaps the removed slot with the last element,
+        /// and reverse iteration re-visits the swapped element on the next step.
+        /// <br/>
+        /// <b>Re-entrancy:</b> Not re-entrant. Callbacks must not add or remove
+        /// timers during <c>OnUpdate</c>.
         /// </remarks>
         public void OnUpdate(float deltaTime)
         {
             if (_isDirty) HandleSorting(deltaTime);
-            
-            var count = _timers.Count;
-            if (count == 0) return;
+            if (_timerCount == 0) return;
             
             var unscaledDeltaTime = StaticTime.UnscaledDeltaTime;
+            var span = _timerBuffer.AsSpan(0, _timerCount);
 
-            for (var i = count - 1; i >= 0; --i)
+            for (var i = span.Length - 1; i >= 0; --i)
             {
-                var timer = _timers[i];
+                var timer = span[i];
 
                 if (IsInvalid(timer)) { RemoveAtFast(i); continue; }
                 if (!timer.CanProcess()) continue;
                 
                 var dt = timer.HasUnscaledTime ? unscaledDeltaTime : deltaTime;
-                
                 timer.Tick(dt);
                 
                 if (!timer.IsDone)
@@ -141,6 +180,8 @@ namespace Ransom
 
         protected override void OnInstanceReady()
         {
+            InitPool();
+            
             if (Application.isPlaying && UpdateDispatcher.Instance)
                 UpdateDispatcher.Instance.AddBaseUpdate(this);
         }
@@ -150,110 +191,139 @@ namespace Ransom
             if (Application.isPlaying && UpdateDispatcher.Instance)
                 UpdateDispatcher.Instance.RemoveBaseUpdate(this);
             
-            _timers.Clear();
+            ClearTimerStorage();
+            
+            _timerPool?.Dispose();
+            _timerPool = null;
         }
 
-        #endregion
+        #endregion Lifecycle Hooks
+
+        #region Pool Methods
+
+        /// <summary>
+        /// Initializes the <see cref="ClassObjectPool{T}"/> from the assigned
+        /// <see cref="TimerTemplate"/>. Called automatically by
+        /// <see cref="OnInstanceReady"/>.
+        /// </summary>
+        private void InitPool()
+        {
+            if (!_timerTemplate) return;
+
+            _timerPool = new ClassObjectPool<Timer>(
+                prefab: _timerTemplate,
+                preload: DefaultCapacity / 2,
+                capacity: DefaultCapacity,
+                canExpand: true,
+                canRecycle: false,
+                onCreated: source =>
+                {
+                    var instance = new Timer();
+                    instance.Create(source);
+                    return instance;
+                },
+                onDespawn: timer => timer.Reset()
+            );
+        }
+
+        /// <summary>
+        /// Retrieves a <see cref="Timer"/> from the <see cref="ClassObjectPool{T}"/>,
+        /// or allocates a plain <c>new Timer()</c> when pooling is disabled.
+        /// </summary>
+        /// <returns>
+        /// A timer in <see cref="TimerState.Disable"/> state with template defaults
+        /// applied. Configure it via the builder API before calling
+        /// <see cref="Timer.Start()"/>.
+        /// </returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public Timer RentTimer()
+        {
+            return _timerPool != null ? _timerPool.Get() : new Timer();
+        }
+
+        /// <summary>
+        /// Returns a <see cref="Timer"/> to the pool for reuse.
+        /// </summary>
+        /// <param name="timer">The timer to return. Silently ignored if null.</param>
+        /// <remarks>
+        /// <see cref="Timer.Reset"/> is called automatically by the pool's
+        /// <c>Despawn</c> callback — do not call it manually beforehand. Do not hold
+        /// references to <paramref name="timer"/> after this call.
+        /// </remarks>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void ReturnTimer([NotNull] Timer timer)
+        {
+            if (timer is null || _timerPool is null) return;
+            
+            _timerPool.Release(timer);
+        }
+
+        /// <summary>
+        /// Pre-warms the pool by pre-allocating the specified number of
+        /// <see cref="Timer"/> instances. Call during scene load to prevent
+        /// first-use allocation spikes.
+        /// </summary>
+        /// <param name="count">Number of instances to pre-allocate.</param>
+        public void WarmPool(int count)
+        {
+            if (_timerPool is null)
+            {
+                DebugExtensions.Warn(
+                    $"{"WarmPool".ToType()} called but no timerTemplate is assigned. " +
+                    "Assign a TimerTemplate asset in the Inspector to enable pooling.");
+                return;
+            }
+            
+            _timerPool.PreCache(count);
+        }
+
+        #endregion Pool Methods
 
         #region Methods
-
-        /// <summary>
-        /// Orchestrates the throttled re-sorting of the Timer collection.
-        /// </summary>
-        /// <param name="deltaTime">The current game clock delta time.</param>
-        /// <remarks>
-        /// This method implements a "Double-Gate" optimization:
-        /// <list type="number">
-        /// <item><b>Gate 1:</b> It exits immediately if <see cref="_isDirty"/> is false, meaning no timers have been added or looped.</item>
-        /// <item><b>Gate 2:</b> It chooses between <see cref="FrameCounter"/> or <see cref="SecondsTimer"/> based on serialized configuration.</item>
-        /// </list>
-        /// Sorting is only executed when both a structural change has occurred AND the time/frame interval has elapsed.
-        /// </remarks>
-        private void HandleSorting(float deltaTime)
-        {
-            if (!_isDirty) return;
-
-            if (_useFrames && !_useSeconds)
-                FrameCounter();
-            else
-                SecondsTimer(deltaTime);
-        }
-
-        /// <summary>
-        /// Determines whether a Timer is no longer valid for processing.
-        /// </summary>
-        /// <param name="timer">The Timer instance to validate.</param>
-        /// <returns>True if the Timer is cancelled or its associated MonoBehaviour reference has been destroyed; otherwise, false.</returns>
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private bool IsInvalid([NotNull] Timer timer)
-        {
-            return timer.IsCancelled ||
-                   timer is { HasReference: true, IsDestroyed: true };
-        }
-
-        /// <summary>
-        /// Removes a Timer at the specified index using the "Swap-with-Last" technique for O(1) performance.
-        /// </summary>
-        /// <param name="index">The index of the Timer to remove.</param>
-        /// <remarks>
-        /// This method avoids the O(N) cost of shifting elements by overwriting the target index 
-        /// with the last element in the list and then removing the last entry. 
-        /// Note: This operation changes the order of the collection and marks the manager as dirty for re-sorting.
-        /// </remarks>
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private void RemoveAtFast(int index)
-        {
-            var lastIndex = _timers.Count - 1;
-    
-            if (index < lastIndex)
-            {
-                _timers[index] = _timers[lastIndex];
-                _isDirty = true;
-            }
-    
-            _timers.RemoveAt(lastIndex);
-        }
         
         /// <summary>
         /// Registers a new Timer with the manager.
         /// </summary>
         /// <param name="timer">The Timer instance to add.</param>
         /// <remarks>
-        /// Adding a timer marks the manager as dirty, ensuring that the new timer is 
-        /// correctly positioned during the next scheduled sort operation.
+        /// Duplicate adds are silently ignored via the parallel <see cref="HashSet{T}"/>
+        /// containment check, making this method idempotent. Adding a timer marks the
+        /// manager dirty for the next scheduled sort.
         /// </remarks>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void AddTimer([NotNull] Timer timer)
         {
-            _timers.Add(timer);
+            if (!_timerSet.Add(timer)) return;
+            if (_timerCount == _timerBuffer.Length)
+            {
+                Debug.LogError(
+                    "<color=red><b>[ERROR]</b></color> " +
+                    $"TimerManager backing array capacity ({_timerBuffer.Length}). " +
+                    "exceeded. Resizing — consider increasing DefaultCapacity.");
+                Array.Resize(ref _timerBuffer, _timerBuffer.Length * 2);
+            }
+
+            _timerBuffer[_timerCount++] = timer;
             _isDirty = true;
         }
 
-        /// <summary>
-        /// Cancels all currently active Timers managed by this system.
-        /// </summary>
+        /// <summary>Cancels all currently active Timers.</summary>
         public void CancelAllTimers()
         {
-            var count = _timers.Count;
-            for (var i = count - 1; i >= 0; --i)
-            {
-                _timers[i].Cancel();
-            }
+            for (var i = _timerCount - 1; i >= 0; --i) _timerBuffer[i].Cancel();
         }
 
         /// <summary>
-        /// Cancels all active Timers associated with a specific <see cref="MonoBehaviour"/>.
+        /// Cancels all active Timers associated with a specific
+        /// <see cref="MonoBehaviour"/>.
         /// </summary>
-        /// <param name="behaviour">The owner of the timers to cancel.</param>
         public void CancelAllTimers([NotNull] MonoBehaviour behaviour)
         {
             if (!behaviour) throw new ArgumentNullException(nameof(behaviour));
             
-            var count = _timers.Count;
-            for (var i = count - 1; i >= 0; --i)
+            for (var i = _timerCount - 1; i >= 0; --i)
             {
-                var timer = _timers[i];
-                
+                var timer = _timerBuffer[i];
                 if (TimerIsDestroyed(timer)) continue;
                 if (timer.Behaviour != behaviour) continue;
 
@@ -262,60 +332,29 @@ namespace Ransom
         }
 
         /// <summary>
-        /// Checks if the specified Timer is currently being tracked by the manager.
+        /// Returns <c>true</c> if the timer is currently tracked by the manager.
         /// </summary>
-        /// <param name="timer">The Timer to look for.</param>
-        /// <returns>True if the timer exists in the internal collection; otherwise, false.</returns>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public bool ContainsTimer([NotNull] Timer timer) => _timers.Contains(timer);
+        public bool ContainsTimer([NotNull] Timer timer) => _timerSet.Contains(timer);
 
-        /// <summary>
-        /// Increments the frame counter and triggers a collection sort if the frame interval is reached.
-        /// </summary>
-        /// <remarks>
-        /// This method is used when the manager is configured for frame-based throttling. 
-        /// Sorting is an O(N log N) operation; by limiting it to specific frame intervals (e.g., every 60 frames), 
-        /// we significantly reduce the per-frame CPU overhead.
-        /// </remarks>
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private void FrameCounter()
-        {
-            _frameCounter++;
-
-            if (_frameCounter < _intervalFrames) return;
-            
-            SortTimers();
-            
-            _isDirty = false;
-            _frameCounter = 0;
-        }
-
-        /// <summary>
-        /// Resumes all currently suspended Timers.
-        /// </summary>
+        /// <summary>Resumes all currently suspended Timers.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void ResumeAllTimers()
         {
-            var count = _timers.Count;
-            for (var i = 0; i < count; ++i)
-            {
-                _timers[i].Resume();
-            }
+            for (var i = 0; i < _timerCount; ++i) _timerBuffer[i].Resume();
         }
 
         /// <summary>
-        /// Resumes all suspended Timers associated with a specific <see cref="MonoBehaviour"/>.
+        /// Resumes all suspended Timers associated with a specific
+        /// <see cref="MonoBehaviour"/>.
         /// </summary>
-        /// <param name="behaviour">The owner of the timers to resume.</param>
         public void ResumeAllTimers([NotNull] MonoBehaviour behaviour)
         {
             if (!behaviour) throw new ArgumentNullException(nameof(behaviour));
             
-            var count = _timers.Count;
-            for (var i = 0; i < count; ++i)
+            for (var i = 0; i < _timerCount; ++i)
             {
-                var timer = _timers[i];
-                
+                var timer = _timerBuffer[i];
                 if (TimerIsDestroyed(timer)) continue;
                 if (timer.Behaviour != behaviour) continue;
 
@@ -323,14 +362,123 @@ namespace Ransom
             }
         }
 
+        public void Shutdown() => OnShutdown();
+
         /// <summary>
-        /// Tracks elapsed real-time and triggers a collection sort if the second-based interval is reached.
+        /// Sorts the active timer slice by ascending
+        /// <see cref="Timer.TimeRemaining"/> using
+        /// <see cref="Timer.CompareTo"/> and clears the dirty flag.
         /// </summary>
         /// <remarks>
-        /// This method uses <see cref="StaticTime.DeltaTime"/> to track time independently of the frame rate. 
-        /// It ensures that even if the frame rate fluctuates, the timer collection is re-prioritized 
-        /// at a consistent temporal frequency.
+        /// Only the live slice <c>[0, _timerCount)</c> of the backing
+        /// array is sorted — unused tail slots are never touched.
+        /// Skips the sort when zero or one timer is active.
         /// </remarks>
+        public void SortTimers()
+        {
+            if (_timerCount > 1)
+            {
+                Array.Sort(_timerBuffer, 0, _timerCount);
+            }
+
+            _isDirty = false;
+        }
+
+        /// <summary>Suspends all currently active Timers.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void SuspendAllTimers()
+        {
+            for (var i = 0; i < _timerCount; ++i) _timerBuffer[i].Suspend();
+        }
+
+        /// <summary>
+        /// Suspends all active Timers associated with a specific
+        /// <see cref="MonoBehaviour"/>.
+        /// </summary>
+        public void SuspendAllTimers([NotNull] MonoBehaviour behaviour)
+        {
+            if (!behaviour) throw new ArgumentNullException(nameof(behaviour));
+            
+            for (var i = 0; i < _timerCount; ++i)
+            {
+                var timer = _timerBuffer[i];
+                if (TimerIsDestroyed(timer)) continue;
+                if (timer.Behaviour != behaviour) continue;
+
+                timer.Suspend();
+            }
+        }
+        
+        /// <summary>
+        /// Clears the active timer storage, releasing all GC references.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void ClearTimerStorage()
+        {
+            Array.Clear(_timerBuffer, 0, _timerCount);
+            _timerSet.Clear();
+            _timerCount = 0;
+        }
+
+        /// <summary>
+        /// Increments the frame counter and triggers a sort when the interval elapses.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void FrameCounter()
+        {
+            if (++_frameCounter < _intervalFrames) return;
+            
+            SortTimers();
+            _isDirty = false;
+            _frameCounter = 0;
+        }
+
+        /// <summary>
+        /// Orchestrates the throttled re-sorting of the Timer collection.
+        /// Called only when <see cref="_isDirty"/> is <c>true</c>.
+        /// </summary>
+        private void HandleSorting(float deltaTime)
+        {
+            if (_useFrames && !_useSeconds) FrameCounter();
+            else SecondsTimer(deltaTime);
+        }
+
+        /// <summary>
+        /// Determines whether a Timer is no longer valid for processing.
+        /// </summary>
+        /// <param name="timer">The Timer instance to validate.</param>
+        /// <returns>True if the Timer is cancelled or its associated MonoBehaviour reference has been destroyed; otherwise, false.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool IsInvalid([NotNull] Timer timer)
+            => timer.IsCancelled || (timer.HasReference && timer.IsDestroyed);
+
+        /// <summary>
+        /// Removes a Timer at the specified index using the "Swap-with-Last"
+        /// technique for O(1) performance, keeping both the array and the set in sync.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void RemoveAtFast(int index)
+        {
+            var lastIndex = --_timerCount;
+            var lastTimer = _timerBuffer[lastIndex];
+            var timerToRemove = _timerBuffer[index];
+
+            _timerSet.Remove(timerToRemove);
+    
+            if (index < lastIndex)
+            {
+                _timerBuffer[index] = lastTimer;
+                _isDirty = true;
+            }
+            
+            _timerBuffer[lastIndex] = null;
+            
+            timerToRemove.DeInit();
+        }
+
+        /// <summary>
+        /// Accumulates elapsed time and triggers a sort when the interval elapses.
+        /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void SecondsTimer(float deltaTime)
         {
@@ -339,60 +487,17 @@ namespace Ransom
             if (_timeSinceLastSort < _intervalSeconds) return;
             
             SortTimers();
-            
             _isDirty = false;
             _timeSinceLastSort = 0f;
         }
 
-        public void Shutdown()
-        {
-            OnShutdown();
-        }
-        
-        public void SortTimers()
-        {
-            _timers.Sort();
-            _isDirty = false;
-        }
-
         /// <summary>
-        /// Suspends all currently active Timers.
+        /// Returns <c>true</c> if a Timer reference is null, unbound, or its bound
+        /// GameObject has been destroyed.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void SuspendAllTimers()
-        {
-            var count = _timers.Count;
-            for (var i = 0; i < count; ++i)
-            {
-                _timers[i].Suspend();
-            }
-        }
-
-        /// <summary>
-        /// Suspends all active Timers associated with a specific <see cref="MonoBehaviour"/>.
-        /// </summary>
-        /// <param name="behaviour">The owner of the timers to suspend.</param>
-        public void SuspendAllTimers([NotNull] MonoBehaviour behaviour)
-        {
-            if (!behaviour) throw new ArgumentNullException(nameof(behaviour));
-            
-            var count = _timers.Count;
-            for (var i = 0; i < count; ++i)
-            {
-                var timer = _timers[i];
-                
-                if (TimerIsDestroyed(timer)) continue;
-                if (timer.Behaviour != behaviour) continue;
-
-                timer.Suspend();
-            }
-        }
-
-        /// <summary>
-        /// Determines if a Timer reference is null or its bound GameObject has been destroyed.
-        /// </summary>
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static bool TimerIsDestroyed([CanBeNull] Timer timer) => timer is null || !timer.HasReference || timer.IsDestroyed;
+        private static bool TimerIsDestroyed([CanBeNull] Timer timer)
+            => timer is null || !timer.HasReference || timer.IsDestroyed;
         
         #endregion Methods
     }

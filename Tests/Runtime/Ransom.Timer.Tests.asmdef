@@ -3,6 +3,7 @@
     "rootNamespace": "Ransom.Tests",
     "references": [
         "Ransom.Core",
+        "Ransom.Pool",
         "Ransom.ScriptableObjects",
         "Ransom.Timer",
         "Ransom.Utils",
