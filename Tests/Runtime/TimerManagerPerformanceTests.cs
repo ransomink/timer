@@ -8,8 +8,9 @@ namespace Ransom.Tests
     [TestFixture]
     public class TimerManagerPerformanceTests
     {
-        private TimerManager  _manager;
-        private TimerTemplate _template;
+        private DebugSettings    _debug;
+        private TimerManager     _manager;
+        private TimerTemplate    _template;
         private UpdateDispatcher _dispatcher;
         
         #region Setup
@@ -20,6 +21,7 @@ namespace Ransom.Tests
             // UnitySynchronizationContextDispatcher.Initialize();
             _manager         = ScriptableObject.CreateInstance<TimerManager>();
             _template        = ScriptableObject.CreateInstance<TimerTemplate>();
+            _template.name   = "[TEST] PoolableTimer";
             _template.Source = new Timer();
 
             var go      = new GameObject("[TEST] UpdateDispatcher");
@@ -338,5 +340,39 @@ namespace Ransom.Tests
         }
 
         #endregion ClassObjectPool Tests
+
+        #region GroupId Tests
+
+        [Test]
+        public void CancelAllTimersByGroupId_OnlyCancelTargetGroup()
+        {
+            EnablePool();
+            
+            var timerGroup1A = _manager.RentTimer().Group(1).Start(10f);
+            var timerGroup1B = _manager.RentTimer().Group(1).Start(10f);
+            var timerGroup2A = _manager.RentTimer().Group(2).Start(10f);
+            
+            _manager.CancelAllTimers(1);
+            
+            Assert.AreEqual(TimerState.Cancelled, timerGroup1A.State, "Timer1A should be cancelled.");
+            Assert.AreEqual(TimerState.Cancelled, timerGroup1B.State, "Timer1B should be cancelled.");
+            Assert.AreEqual(TimerState.Activated, timerGroup2A.State, "Timer2A should remain activated.");
+        }
+
+        [Test]
+        public void SuspendAllTimersByGroupId_OnlySuspendsTargetGroup()
+        {
+            EnablePool();
+            
+            var timerGroup99 = _manager.RentTimer().Group(99).Start(10f);
+            var timerUncategorized = _manager.RentTimer().Start(10f);
+            
+            _manager.SuspendAllTimers(99);
+            
+            Assert.AreEqual(TimerState.Suspended, timerGroup99.State, "Timer99 should be suspended.");
+            Assert.AreEqual(TimerState.Activated, timerUncategorized.State, "Uncategorized timer should remain activated.");
+        }
+
+        #endregion GroupId Tests
     }
 }

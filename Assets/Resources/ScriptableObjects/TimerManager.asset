@@ -13,6 +13,7 @@ MonoBehaviour:
   m_Name: TimerManager
   m_EditorClassIdentifier: 
   _useFrames: 1
-  _useSeconds: 0
   _intervalFrames: 30
+  _useSeconds: 0
   _intervalSeconds: 1
+  _timerTemplate: {fileID: 11400000, guid: 6845c2cf94ce9df4b81da418b7869c73, type: 2}

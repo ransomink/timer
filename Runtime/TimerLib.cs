@@ -22,6 +22,7 @@ namespace Ransom
         public static class Tooltips
         {
             public const string State = "The current active state.";
+            public const string GroupId = "Categorizes the timer for bulk operations like cancellation.";
             public const string IsDirty =
                 "If the state was modified externally without following the regular complete conditions.";
         

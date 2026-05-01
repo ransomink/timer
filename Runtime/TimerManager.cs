@@ -42,7 +42,7 @@ namespace Ransom
     [CreateAssetMenu(
         fileName = TimerLib.Folders.TimerFileName, 
         menuName = TimerLib.Folders.TimerMenuName, 
-        order = 0
+        order    = 0
     )]
     public sealed class TimerManager : ScriptableSingleton<TimerManager>, IUpdate
     {
@@ -81,9 +81,7 @@ namespace Ransom
         
         public static bool IsQuittingApplication { get; private set; }
         
-        /// <summary>
-        /// Provides a read-only view over all currently active and managed Timers.
-        /// </summary>
+        /// <summary>Provides a read-only view over all currently active and managed Timers.</summary>
         /// <remarks>
         /// Returns an <see cref="ArraySegment{T}"/> wrapping the live slice of the
         /// internal backing array. <see cref="ArraySegment{T}"/> implements
@@ -104,9 +102,7 @@ namespace Ransom
         /// </summary>
         public int ActivePooledTimerCount => _timerPool?.Active ?? 0;
         
-        /// <summary>
-        /// Whether the <see cref="ClassObjectPool{T}"/> has been initialized.
-        /// </summary>
+        /// <summary>Whether the <see cref="ClassObjectPool{T}"/> has been initialized.</summary>
         public bool IsPoolReady => _timerPool != null;
         
         #endregion Properties
@@ -119,9 +115,7 @@ namespace Ransom
             if (_useSeconds) _useFrames = false;
         }
 
-        /// <summary>
-        /// Processes and updates all active Timers managed by this system.
-        /// </summary>
+        /// <summary>Processes and updates all active Timers managed by this system.</summary>
         /// <param name="deltaTime">The current game clock delta time.</param>
         /// <remarks>
         /// Iterates the live timer slice in reverse via <see cref="Span{T}"/> for
@@ -137,12 +131,13 @@ namespace Ransom
             if (_isDirty) HandleSorting(deltaTime);
             if (_timerCount == 0) return;
             
+            // var TimerBufferSpan   = _timerBuffer.AsSpan(0, _timerCount);
+            var cachedTimerCount  = _timerCount;
             var unscaledDeltaTime = StaticTime.UnscaledDeltaTime;
-            var span = _timerBuffer.AsSpan(0, _timerCount);
 
-            for (var i = span.Length - 1; i >= 0; --i)
+            for (var i = cachedTimerCount - 1; i >= 0; --i)
             {
-                var timer = span[i];
+                var timer = _timerBuffer[i];
 
                 if (IsInvalid(timer)) { RemoveAtFast(i); continue; }
                 if (!timer.CanProcess()) continue;
@@ -159,6 +154,9 @@ namespace Ransom
                 timer.ExecuteUpdate();
                 timer.ExecuteComplete();
                 
+                // TimerSequence.PlayNextStep() calls timer.Start() inside
+                // ExecuteComplete(), the state is now Activated. Skip removal.
+                if (timer.State == TimerState.Activated) continue;
                 if (!timer.HasLoop) { RemoveAtFast(i); continue; }
                 
                 timer.ExecuteRestart();
@@ -241,9 +239,7 @@ namespace Ransom
             return _timerPool != null ? _timerPool.Get() : new Timer();
         }
 
-        /// <summary>
-        /// Returns a <see cref="Timer"/> to the pool for reuse.
-        /// </summary>
+        /// <summary>Returns a <see cref="Timer"/> to the pool for reuse.</summary>
         /// <param name="timer">The timer to return. Silently ignored if null.</param>
         /// <remarks>
         /// <see cref="Timer.Reset"/> is called automatically by the pool's
@@ -281,9 +277,7 @@ namespace Ransom
 
         #region Methods
         
-        /// <summary>
-        /// Registers a new Timer with the manager.
-        /// </summary>
+        /// <summary>Registers a new Timer with the manager.</summary>
         /// <param name="timer">The Timer instance to add.</param>
         /// <remarks>
         /// Duplicate adds are silently ignored via the parallel <see cref="HashSet{T}"/>
@@ -312,28 +306,32 @@ namespace Ransom
         {
             for (var i = _timerCount - 1; i >= 0; --i) _timerBuffer[i].Cancel();
         }
+        
+        /// <summary>Cancels all active Timers assigned to a specific Group ID.</summary>
+        public void CancelAllTimers(int groupId)
+        {
+            for (var i = _timerCount - 1; i >= 0; --i)
+            {
+                var timer = _timerBuffer[i];
+                if (TimerIsDestroyed(timer)) continue;
+                if (timer.GroupId == groupId) timer.Cancel();
+            }
+        }
 
-        /// <summary>
-        /// Cancels all active Timers associated with a specific
-        /// <see cref="MonoBehaviour"/>.
-        /// </summary>
+        /// <summary>Cancels all active Timers associated with a specific<see cref="MonoBehaviour"/>.</summary>
         public void CancelAllTimers([NotNull] MonoBehaviour behaviour)
         {
-            if (!behaviour) throw new ArgumentNullException(nameof(behaviour));
+            if (behaviour is null) throw new ArgumentNullException(nameof(behaviour));
             
             for (var i = _timerCount - 1; i >= 0; --i)
             {
                 var timer = _timerBuffer[i];
                 if (TimerIsDestroyed(timer)) continue;
-                if (timer.Behaviour != behaviour) continue;
-
-                timer.Cancel();
+                if (timer.Behaviour == behaviour) timer.Cancel();
             }
         }
 
-        /// <summary>
-        /// Returns <c>true</c> if the timer is currently tracked by the manager.
-        /// </summary>
+        /// <summary>Returns <c>true</c> if the timer is currently tracked by the manager.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool ContainsTimer([NotNull] Timer timer) => _timerSet.Contains(timer);
 
@@ -343,22 +341,28 @@ namespace Ransom
         {
             for (var i = 0; i < _timerCount; ++i) _timerBuffer[i].Resume();
         }
+        
+        /// <summary>Resumes all suspended Timers assigned to a specific Group ID.</summary>
+        public void ResumeAllTimers(int groupId)
+        {
+            for (var i = 0; i < _timerCount; ++i)
+            {
+                var timer = _timerBuffer[i];
+                if (TimerIsDestroyed(timer)) continue;
+                if (timer.GroupId == groupId) timer.Resume();
+            }
+        }
 
-        /// <summary>
-        /// Resumes all suspended Timers associated with a specific
-        /// <see cref="MonoBehaviour"/>.
-        /// </summary>
+        /// <summary>Resumes all suspended Timers associated with a specific<see cref="MonoBehaviour"/>.</summary>
         public void ResumeAllTimers([NotNull] MonoBehaviour behaviour)
         {
-            if (!behaviour) throw new ArgumentNullException(nameof(behaviour));
+            if (behaviour is null) throw new ArgumentNullException(nameof(behaviour));
             
             for (var i = 0; i < _timerCount; ++i)
             {
                 var timer = _timerBuffer[i];
                 if (TimerIsDestroyed(timer)) continue;
-                if (timer.Behaviour != behaviour) continue;
-
-                timer.Resume();
+                if (timer.Behaviour == behaviour) timer.Resume();
             }
         }
 
@@ -390,14 +394,22 @@ namespace Ransom
         {
             for (var i = 0; i < _timerCount; ++i) _timerBuffer[i].Suspend();
         }
+        
+        /// <summary>Suspends all active Timers assigned to a specific Group ID.</summary>
+        public void SuspendAllTimers(int groupId)
+        {
+            for (var i = 0; i < _timerCount; ++i)
+            {
+                var timer = _timerBuffer[i];
+                if (TimerIsDestroyed(timer)) continue;
+                if (timer.GroupId == groupId) timer.Suspend();
+            }
+        }
 
-        /// <summary>
-        /// Suspends all active Timers associated with a specific
-        /// <see cref="MonoBehaviour"/>.
-        /// </summary>
+        /// <summary>Suspends all active Timers associated with a specific<see cref="MonoBehaviour"/>.</summary>
         public void SuspendAllTimers([NotNull] MonoBehaviour behaviour)
         {
-            if (!behaviour) throw new ArgumentNullException(nameof(behaviour));
+            if (behaviour is null) throw new ArgumentNullException(nameof(behaviour));
             
             for (var i = 0; i < _timerCount; ++i)
             {
@@ -409,9 +421,7 @@ namespace Ransom
             }
         }
         
-        /// <summary>
-        /// Clears the active timer storage, releasing all GC references.
-        /// </summary>
+        /// <summary>Clears the active timer storage, releasing all GC references.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void ClearTimerStorage()
         {
@@ -420,9 +430,7 @@ namespace Ransom
             _timerCount = 0;
         }
 
-        /// <summary>
-        /// Increments the frame counter and triggers a sort when the interval elapses.
-        /// </summary>
+        /// <summary>Increments the frame counter and triggers a sort when the interval elapses.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void FrameCounter()
         {
@@ -447,7 +455,9 @@ namespace Ransom
         /// Determines whether a Timer is no longer valid for processing.
         /// </summary>
         /// <param name="timer">The Timer instance to validate.</param>
-        /// <returns>True if the Timer is cancelled or its associated MonoBehaviour reference has been destroyed; otherwise, false.</returns>
+        /// <returns>True if the Timer is cancelled or its associated
+        /// MonoBehaviour reference has been destroyed; otherwise, false.
+        /// </returns>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static bool IsInvalid([NotNull] Timer timer)
             => timer.IsCancelled || (timer.HasReference && timer.IsDestroyed);
@@ -476,9 +486,7 @@ namespace Ransom
             timerToRemove.DeInit();
         }
 
-        /// <summary>
-        /// Accumulates elapsed time and triggers a sort when the interval elapses.
-        /// </summary>
+        /// <summary>Accumulates elapsed time and triggers a sort when the interval elapses.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void SecondsTimer(float deltaTime)
         {
@@ -497,8 +505,13 @@ namespace Ransom
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static bool TimerIsDestroyed([CanBeNull] Timer timer)
-            => timer is null || !timer.HasReference || timer.IsDestroyed;
-        
+        {
+            if (timer is null) return true;
+            if (timer.HasReference && timer.IsDestroyed) return true;
+            
+            return false;
+        }
+
         #endregion Methods
     }
 }
